@@ -1,0 +1,14 @@
+# Known-service inventory for discovery.py (the fleet health monitor).
+# The monitor touches ONLY these (host, port) pairs -- it is operational
+# monitoring, not reconnaissance. Populate from nodes.yaml after the boards are
+# on the network. IPs shown match the charter's 10.0.0.0/24 testbed subnet.
+services:
+  - {host: 10.0.0.11, port: 22,   name: ssh}      # rpi3b-1 sshd
+  - {host: 10.0.0.11, port: 23,   name: telnet}   # rpi3b-1 busybox telnetd (legacy IoT)
+  - {host: 10.0.0.11, port: 1883, name: mqtt}     # rpi3b-1 mosquitto broker
+  - {host: 10.0.0.11, port: 8080, name: http}     # rpi3b-1 health endpoint
+  - {host: 10.0.0.12, port: 22,   name: ssh}      # rpi5-silo sshd
+  - {host: 10.0.0.12, port: 502,  name: modbus}   # rpi5-silo modbus sim
+  - {host: 10.0.0.20, port: 22,   name: ssh}      # jetson-1 sshd
+  - {host: 10.0.0.20, port: 554,  name: rtsp}     # camera stream (via jetson/ipcam)
+  - {host: 10.0.0.30, port: 554,  name: rtsp}     # ipcam-1 direct

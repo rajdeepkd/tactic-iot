@@ -1,0 +1,322 @@
+# TACTIC-IoT v2 feature manifest
+# Auto-generated from dataset/preprocessed_v2/feature_groups.json + align_windows.py semantics.
+# One fused window = one sample. Windowing bins events on the chrony-synced CLOCK_REALTIME
+# at a global epoch anchor, so equal window_idx is the SAME wall-clock interval on every device.
+generated_utc: "2026-10-30T16:43:56.710132+00:00"
+window_sizes_s: [1, 5]   # w1 = stage-onset view, w5 = lower-FPR view
+aggregation: {counters: sum, gauges: mean}   # per window, per (device, window_idx)
+anti_leakage: "split by group_id (one run/session = one group), never window-level random"
+n_features: 68   # net 41 + host 10 + tel 17
+n_presence_flags: 3
+
+feature_groups:
+  net:
+    - name: net__arp_reply
+      unit: "count"
+      agg: sum
+      desc: "ARP replies -- a burst is the ARP-poisoning tell."
+    - name: net__arp_request
+      unit: "count"
+      agg: sum
+      desc: "ARP requests."
+    - name: net__arp_total
+      unit: "count"
+      agg: sum
+      desc: "Total ARP packets (MITM/ARP-spoof view)."
+    - name: net__bytes
+      unit: "bytes"
+      agg: sum
+      desc: "Bytes on the wire in the window (per-packet)."
+    - name: net__cnt
+      unit: "count"
+      agg: mean
+      desc: "Network source rows contributing to the window (modality-presence basis)."
+    - name: net__coap_con
+      unit: "count"
+      agg: sum
+      desc: "CoAP confirmable (CON) messages."
+    - name: net__coap_get
+      unit: "count"
+      agg: sum
+      desc: "CoAP GET requests."
+    - name: net__coap_msg
+      unit: "count"
+      agg: sum
+      desc: "CoAP messages."
+    - name: net__conns
+      unit: "count"
+      agg: sum
+      desc: "Zeek flows (conn.log records) in the window."
+    - name: net__dns_nx
+      unit: "count"
+      agg: sum
+      desc: "DNS responses with rcode NXDOMAIN."
+    - name: net__dns_q
+      unit: "count"
+      agg: sum
+      desc: "DNS queries (dns.log records)."
+    - name: net__duration
+      unit: "s"
+      agg: mean
+      desc: "Mean Zeek flow duration in the window."
+    - name: net__http_4xx
+      unit: "count"
+      agg: sum
+      desc: "HTTP responses with status 4xx."
+    - name: net__http_5xx
+      unit: "count"
+      agg: sum
+      desc: "HTTP responses with status 5xx."
+    - name: net__http_req
+      unit: "count"
+      agg: sum
+      desc: "HTTP requests (http.log records)."
+    - name: net__missed_bytes
+      unit: "bytes"
+      agg: mean
+      desc: "Mean missed (capture-gap) bytes per flow."
+    - name: net__modbus_exc
+      unit: "count"
+      agg: sum
+      desc: "Modbus exception responses."
+    - name: net__modbus_req
+      unit: "count"
+      agg: sum
+      desc: "Modbus requests (modbus.log records)."
+    - name: net__modbus_write
+      unit: "count"
+      agg: sum
+      desc: "Modbus write-function requests -- the unauthorized-control network view."
+    - name: net__mqtt_connack_fail
+      unit: "count"
+      agg: sum
+      desc: "Refused MQTT CONNECTs (not Accepted) -- brute/connflood tell."
+    - name: net__mqtt_connect
+      unit: "count"
+      agg: sum
+      desc: "MQTT CONNECT messages."
+    - name: net__mqtt_pub
+      unit: "count"
+      agg: sum
+      desc: "MQTT PUBLISH messages."
+    - name: net__mqtt_sub
+      unit: "count"
+      agg: sum
+      desc: "MQTT SUBSCRIBE messages."
+    - name: net__orig_bytes
+      unit: "bytes"
+      agg: mean
+      desc: "Mean originator L7 payload bytes per flow."
+    - name: net__orig_ip_bytes
+      unit: "bytes"
+      agg: mean
+      desc: "Mean originator IP-layer bytes per flow."
+    - name: net__orig_pkts
+      unit: "pkts"
+      agg: mean
+      desc: "Mean originator packet count per flow."
+    - name: net__pkts
+      unit: "pkts"
+      agg: sum
+      desc: "Packets on the wire in the window (per-packet, not per-flow -- fills every second a long transfer/flood spans)."
+    - name: net__rej
+      unit: "count"
+      agg: sum
+      desc: "REJ flows (connection rejected) -- the connect-scan-to-closed-port tell."
+    - name: net__resp_bytes
+      unit: "bytes"
+      agg: mean
+      desc: "Mean responder L7 payload bytes per flow."
+    - name: net__resp_ip_bytes
+      unit: "bytes"
+      agg: mean
+      desc: "Mean responder IP-layer bytes per flow."
+    - name: net__resp_pkts
+      unit: "pkts"
+      agg: mean
+      desc: "Mean responder packet count per flow."
+    - name: net__s0
+      unit: "count"
+      agg: sum
+      desc: "S0 flows (SYN sent, no reply) -- the SYN-scan tell."
+    - name: net__scan_s0
+      unit: "count"
+      agg: sum
+      desc: "Scan/half-open/rejected flows: union of conn_state {S0,REJ,RSTOS0,SH,SHR,RSTRH}."
+    - name: net__snmp_bulk
+      unit: "count"
+      agg: sum
+      desc: "SNMP getbulk requests."
+    - name: net__snmp_get
+      unit: "count"
+      agg: sum
+      desc: "SNMP get requests (summed per session)."
+    - name: net__snmp_set
+      unit: "count"
+      agg: sum
+      desc: "SNMP set requests -- the control_snmp_set network view."
+    - name: net__ssh_attempts
+      unit: "count"
+      agg: mean
+      desc: "Mean auth_attempts per SSH session (gauge)."
+    - name: net__ssh_auth_fail
+      unit: "count"
+      agg: sum
+      desc: "SSH sessions with auth_success=F (brute-force tell)."
+    - name: net__ssh_auth_ok
+      unit: "count"
+      agg: sum
+      desc: "SSH sessions with auth_success=T."
+    - name: net__ssh_sess
+      unit: "count"
+      agg: sum
+      desc: "SSH sessions (ssh.log records)."
+    - name: net__weird
+      unit: "count"
+      agg: sum
+      desc: "Zeek weird.log anomaly events (proto-violation/MITM tell)."
+  host:
+    - name: host__audit_lines
+      unit: "count"
+      agg: sum
+      desc: "auditd records in the window."
+    - name: host__auth_fail
+      unit: "count"
+      agg: sum
+      desc: "sshd 'Failed password' events."
+    - name: host__auth_ok
+      unit: "count"
+      agg: sum
+      desc: "sshd 'Accepted' events."
+    - name: host__cnt
+      unit: "count"
+      agg: mean
+      desc: "Host source rows contributing to the window (modality-presence basis)."
+    - name: host__connect
+      unit: "count"
+      agg: sum
+      desc: "auditd connect() syscalls."
+    - name: host__execve
+      unit: "count"
+      agg: sum
+      desc: "auditd EXECVE records (process execution -- execution-stage host signal)."
+    - name: host__invalid_user
+      unit: "count"
+      agg: sum
+      desc: "'Invalid user' events."
+    - name: host__log_lines
+      unit: "count"
+      agg: sum
+      desc: "journald lines in the window."
+    - name: host__new_session
+      unit: "count"
+      agg: sum
+      desc: "Session-opened / systemd-logind events."
+    - name: host__syscall
+      unit: "count"
+      agg: sum
+      desc: "auditd SYSCALL records."
+  tel:
+    - name: tel__cnt
+      unit: "count"
+      agg: mean
+      desc: "Telemetry samples contributing to the window (modality-presence basis)."
+    - name: tel__col_cap_cpu_pct
+      unit: "pct"
+      agg: mean
+      desc: "C3 nuisance gauge: pcap-capture process CPU on the victim."
+    - name: tel__col_cpu_pct
+      unit: "pct"
+      agg: mean
+      desc: "C3 nuisance gauge: capture-collector CPU on the victim (controls for self-load)."
+    - name: tel__col_n
+      unit: "count"
+      agg: mean
+      desc: "C3 nuisance gauge: number of collector processes sampled."
+    - name: tel__col_rss_mb
+      unit: "MB"
+      agg: mean
+      desc: "C3 nuisance gauge: collector resident memory on the victim."
+    - name: tel__cpu_pct
+      unit: "pct"
+      agg: mean
+      desc: "Victim CPU utilisation."
+    - name: tel__disk_r_bps
+      unit: "bps"
+      agg: mean
+      desc: "Victim disk read rate."
+    - name: tel__disk_w_bps
+      unit: "bps"
+      agg: mean
+      desc: "Victim disk write rate."
+    - name: tel__load1
+      unit: "load"
+      agg: mean
+      desc: "1-minute load average."
+    - name: tel__load15
+      unit: "load"
+      agg: mean
+      desc: "15-minute load average."
+    - name: tel__load5
+      unit: "load"
+      agg: mean
+      desc: "5-minute load average."
+    - name: tel__mem_pct
+      unit: "pct"
+      agg: mean
+      desc: "Victim memory utilisation."
+    - name: tel__mem_used_mb
+      unit: "MB"
+      agg: mean
+      desc: "Victim memory used."
+    - name: tel__net_rx_bps
+      unit: "bps"
+      agg: mean
+      desc: "Victim NIC receive rate."
+    - name: tel__net_tx_bps
+      unit: "bps"
+      agg: mean
+      desc: "Victim NIC transmit rate."
+    - name: tel__nprocs
+      unit: "count"
+      agg: mean
+      desc: "Number of processes."
+    - name: tel__temp_c
+      unit: "C"
+      agg: mean
+      desc: "SoC temperature."
+  presence:
+    - name: net_present
+      unit: "bool"
+      agg: flag
+      desc: "1 if the network modality is present in the window (modality_mask[0])."
+    - name: host_present
+      unit: "bool"
+      agg: flag
+      desc: "1 if the host modality is present in the window (modality_mask[1])."
+    - name: tel_present
+      unit: "bool"
+      agg: flag
+      desc: "1 if the telemetry modality is present in the window (modality_mask[2])."
+
+labels:
+  y_binary: "0 = benign (stage 'normal'), 1 = any attack stage."
+  y_stage:  "coarse kill-chain stage (13 classes incl. 'normal'). map below."
+  y_sublabel: "fine attack_type (33 classes). map below."
+  stage_map: {"bruteforce": 0, "bruteforce_slow": 1, "ddos": 2, "defense_evasion": 3, "execution": 4, "exfil": 5, "lateral": 6, "mitm": 7, "normal": 8, "persistence": 9, "privesc": 10, "recon": 11, "unauthorized_control": 12}
+  sublabel_map: {"bruteforce_dict": 0, "bruteforce_mqtt": 1, "bruteforce_slow": 2, "bruteforce_snmp": 3, "bruteforce_telnet": 4, "control_modbus_write": 5, "control_mqtt_cmdinject": 6, "control_snmp_set": 7, "ddos_ackflood": 8, "ddos_coap_conflood": 9, "ddos_icmpflood": 10, "ddos_mqtt_connflood": 11, "ddos_synflood": 12, "ddos_udpflood": 13, "evasion_logtamper": 14, "execution_lolbin": 15, "exfil_bulk": 16, "exfil_mqtt": 17, "lateral_scan": 18, "mitm_arp": 19, "normal": 20, "persistence_cron": 21, "privesc_suidscan": 22, "recon_coap_discovery": 23, "recon_connectscan": 24, "recon_hostsweep": 25, "recon_modbus_scan": 26, "recon_mqtt_enum": 27, "recon_osdetect": 28, "recon_snmp_walk": 29, "recon_stealthscan": 30, "recon_synscan": 31, "recon_udpscan": 32}
+
+bookkeeping_columns:
+  device_id: "capturing victim board (rpi3b1 / rpi3b2)."
+  window_idx: "floor((ts_realtime_ns - anchor) / W_ns); equal idx = same interval across devices."
+  window_start_iso: "window start wall-clock (UTC ISO-8601)."
+  group_id: "scenario#run for attack windows, benign#device#bucket for benign; the grouped-split key."
+  modality_mask: "3-char net/host/tel presence string, e.g. '111','101'."
+  label_overlap: "fraction of the window covered by the winning label interval."
+  attack_type: "fine ground-truth label (sub-label) from the orchestrator labels.csv."
+  stage: "coarse ground-truth kill-chain stage."
+
+provenance:
+  clock: "chrony; hub is stratum master; victim offset < 10 us at capture."
+  ground_truth: "interval-join against hub labels.csv (orchestrator owns the clock); no hand annotation."
+  identity_dropped: "IPs, hostnames, qnames, URIs, client-ids, topics, SNMP community, key fingerprints dropped at extraction (anti-leakage)."

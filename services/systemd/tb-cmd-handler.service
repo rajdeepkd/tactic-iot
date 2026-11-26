@@ -1,0 +1,25 @@
+# Always-on MQTT command subscriber (TACTIC-IoT v2). Gives the
+# control_mqtt_cmdinject class a host footprint (see tactic-cmd-handler.py).
+# Install on each victim AFTER the broker is up:
+#   sudo cp tactic-cmd-handler.py /opt/testbed/services/
+#   sudo cp systemd/tb-cmd-handler.service /etc/systemd/system/
+#   sudo systemctl enable --now tb-cmd-handler
+[Unit]
+Description=TACTIC-IoT MQTT command handler (Objective 3 v2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# broker is the local victim broker on loopback
+Environment=TB_BROKER=127.0.0.1
+Environment=TB_BROKER_PORT=1883
+ExecStart=/usr/bin/python3 /opt/testbed/services/tactic-cmd-handler.py
+Restart=always
+RestartSec=5
+Nice=5
+CPUQuota=20%
+MemoryMax=100M
+
+[Install]
+WantedBy=multi-user.target

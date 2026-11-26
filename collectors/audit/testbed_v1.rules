@@ -1,0 +1,42 @@
+## Objective-3 testbed auditd rules v1 (2026-09-28)
+## Host modality of record. Bounded, EVENT-based (not all-syscalls) so the 0.9 GB
+## RPi 3B is not swamped. aarch64 (b64) on all three boards. Compatible with
+## auditd 2.8 (Jetson/bionic) and 4.0 (Pi/trixie).
+## Load with: augenrules --load   (drops = watch, do not silently lose — see backlog).
+
+## reset + backlog (drop rather than stall the victim under load; monitor lost count)
+-D
+-b 16384
+--backlog_wait_time 0
+
+## --- process execution (delivery/execution/recon-via-LOLbins evidence) ---
+-a always,exit -F arch=b64 -S execve -S execveat -k tb_exec
+
+## --- privilege / credential changes (priv-esc evidence) ---
+-a always,exit -F arch=b64 -S setuid -S setreuid -S setresuid -k tb_priv
+-a always,exit -F arch=b64 -S setgid -S setregid -S setresgid -k tb_priv
+-a always,exit -F arch=b64 -S capset -k tb_priv
+
+## --- auth / identity files (credential-access & account-manipulation evidence) ---
+-w /etc/passwd        -p wa -k tb_identity
+-w /etc/shadow        -p wa -k tb_identity
+-w /etc/group         -p wa -k tb_identity
+-w /etc/gshadow       -p wa -k tb_identity
+-w /etc/sudoers       -p wa -k tb_identity
+-w /etc/sudoers.d/    -p wa -k tb_identity
+-w /etc/ssh/sshd_config -p wa -k tb_identity
+
+## --- persistence (cron / systemd units / ssh keys) ---
+-w /etc/crontab            -p wa -k tb_persist
+-w /etc/cron.d/            -p wa -k tb_persist
+-w /var/spool/cron/        -p wa -k tb_persist
+-w /etc/systemd/system/    -p wa -k tb_persist
+-w /etc/rc.local           -p wa -k tb_persist
+
+## --- IoT unauthorized_control host evidence (v2) ---
+## An SNMP SET of a writable scalar (control_snmp_set) is persisted immediately
+## by net-snmp to its state file, so a write-watch here gives the SET a HOST-silo
+## footprint without a synthetic OID (the realistic sysLocation.0 target stays).
+## Modbus writes and MQTT command-injects already leave execve records via their
+## services' `logger` calls (caught by tb_exec above).
+-w /var/lib/snmp/snmpd.conf -p wa -k tb_iot_snmpset

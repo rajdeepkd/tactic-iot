@@ -1,0 +1,24 @@
+# Always-on RTSP camera server (TACTIC-IoT v2). Install on each victim that
+# plays an IP camera. Needs the mediamtx static arm64 binary at
+# /opt/testbed/bin/mediamtx, a pre-encoded clip at /opt/testbed/media/clip.ts,
+# and ffmpeg installed.
+#   sudo cp mediamtx_tactic.yml /opt/testbed/services/
+#   sudo cp systemd/tb-rtsp.service /etc/systemd/system/
+#   sudo systemctl enable --now tb-rtsp
+[Unit]
+Description=TACTIC-IoT RTSP camera server (Objective 3 v2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/testbed/bin/mediamtx /opt/testbed/services/mediamtx_tactic.yml
+Restart=always
+RestartSec=5
+Nice=10
+# RTSP copy + ffmpeg loop is light but cap it so video never starves collectors
+CPUQuota=40%
+MemoryMax=180M
+
+[Install]
+WantedBy=multi-user.target

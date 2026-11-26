@@ -1,0 +1,16 @@
+[Unit]
+Description=Objective-3 device telemetry collector (thermal-only, D5)
+Documentation=file:/opt/testbed/telemetry_reader.py
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/testbed/telemetry_reader.py --out /var/log/testbed --hz 2 --session live --power none
+Restart=always
+RestartSec=2
+Nice=5
+# telemetry only reads sysfs/psutil; no elevated caps needed.
+
+[Install]
+WantedBy=multi-user.target

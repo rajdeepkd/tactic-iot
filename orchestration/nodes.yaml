@@ -1,0 +1,87 @@
+# =============================================================================
+# Node inventory — Objective-3 physical testbed (RECONCILED to the real fleet
+# 2026-09-29; supersedes the 10.0.0.x placeholder scaffold).
+#
+# Orchestrator = the WINDOWS control box; it reaches every board over key-based
+# SSH (key ~/.ssh/obj3_testbed) and drives the attacker node. rpi5-hub is the
+# chrony STRATUM MASTER: its synced CLOCK_REALTIME is the authoritative timeline
+# the labeller trusts, and run_action.sh stamps campaign intervals on it.
+#
+# Reality checks that killed scaffold assumptions:
+#   * ALL boards are aarch64 / Debian trixie (the RPi 3B runs 64-bit Pi OS) ->
+#     NO 32-bit ABI issue; host modality comparable across boards.
+#   * NO BTF on any board -> NO eBPF CO-RE anywhere -> auditd is THE host-syscall
+#     source on every node (decided by hardware, not preference).
+#   * Victims are 0.9 GB RAM -> tcpdump only, NEVER Zeek on-board. Zeek runs on
+#     rpi5-hub (8 GB) offline against shipped pcaps.
+#   * Jetson dropped (flaky SSH); replaced by a 2nd RPi 3B+. No IP camera.
+# =============================================================================
+roles:
+  attacker:    rpi5-hub      # tool-based attacks (nmap/hydra/hping3/ettercap); Linux node driven by the Windows orchestrator
+  gateway:     rpi5-hub      # D-Link uplink lives behind here; air-gap = unplug the router WAN (Charter S11)
+  collector:   rpi5-hub      # rsync log store + offline Zeek + telemetry/host aggregation
+  time_master: rpi5-hub      # chrony local stratum-10 master; all victims slaved to it
+  # (no sinkhole/emulated-C2: no-malware, tool-based scope -> no C2/exfil sinks)
+
+ssh_defaults:
+  key_file: "~/.ssh/obj3_testbed"                # private key on the orchestrator host (ed25519)
+  connect_timeout_s: 8
+  batch_mode: true                               # -o BatchMode=yes ; fail instead of prompting
+  strict_host_key_checking: "accept-new"
+
+nodes:
+  rpi5-hub:                      # HUB — NOT a labelled victim (containment: attacker+infra live here)
+    ip: 192.168.0.50
+    alt_ips: ["192.168.0.140"]   # dual-homed: eth0 .50 (canonical, +stray .10) / wlan0 .140 (internet during provisioning)
+    ssh_user: cnc
+    arch: aarch64
+    board: rpi5
+    ram_gb: 8
+    os: "Raspberry Pi OS trixie (64-bit)"
+    kernel: "6.12.47"
+    btf: false
+    host_syscall_source: auditd
+    zeek: "/opt/zeek/bin/zeek 9.0.0 (offline pcap -> conn/ssh/dns/http/weird logs)"
+    sudo: passwordless
+    thermal_glob: "/sys/class/thermal/thermal_zone*/temp"
+
+  rpi3b1:                        # VICTIM 1
+    ip: 192.168.0.32
+    ssh_user: pi
+    arch: aarch64
+    board: rpi3b_v1.2
+    ram_gb: 0.9
+    os: "Raspberry Pi OS trixie (64-bit)"
+    kernel: "6.12.47"
+    btf: false
+    host_syscall_source: auditd            # testbed_v1.rules (16 rules) persistent in /etc/audit/rules.d/
+    collectors: ["tb-telemetry.service", "tb-capture.service", "auditd.service"]  # always-on
+    sudo: passwordless
+    thermal_glob: "/sys/class/thermal/thermal_zone*/temp"
+
+  rpi3b2:                        # VICTIM 2  (added 2026-09-28)
+    ip: 192.168.0.33
+    ssh_user: pi
+    arch: aarch64
+    board: rpi3b_plus
+    ram_gb: 0.9
+    os: "Raspberry Pi OS trixie (64-bit)"
+    kernel: "6.12.47"
+    btf: false
+    host_syscall_source: auditd
+    collectors: ["tb-telemetry.service", "tb-capture.service", "auditd.service"]  # always-on
+    sudo: passwordless
+    thermal_glob: "/sys/class/thermal/thermal_zone*/temp"
+
+  attacker-orchestrator:         # the Windows control box (this machine)
+    ip: 192.168.0.0/24-local
+    role_note: "owns labels.csv timeline; SSH-drives run_action.sh on rpi5-hub; runs the align pipeline"
+    os: "Windows 11"
+
+# Air-gap preflight: MUST FAIL when the D-Link WAN uplink is unplugged.
+airgap_probe:
+  cmd: "timeout 5 curl -sS -o /dev/null https://1.1.1.1"   # non-zero exit == good (no egress)
+  dns_cmd: "timeout 5 getent hosts example.com"            # non-zero == good (no resolution)
+  note: "rpi5-hub wlan0 also routes to the campus AV proxy during provisioning; disable wlan0 (or unplug router WAN) before a captured campaign."
+
+subnet: "192.168.0.0/24"

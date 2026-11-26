@@ -1,0 +1,21 @@
+# Always-on CoAP device server (TACTIC-IoT v2). Install on each victim:
+#   sudo cp coap_server.py /opt/testbed/services/
+#   sudo cp systemd/tb-coap.service /etc/systemd/system/
+#   sudo systemctl enable --now tb-coap
+[Unit]
+Description=TACTIC-IoT CoAP device server (Objective 3 v2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/testbed/services/coap_server.py
+Restart=always
+RestartSec=5
+Nice=5
+# guardrails so the service never starves the collectors on a 0.9 GB victim
+CPUQuota=25%
+MemoryMax=120M
+
+[Install]
+WantedBy=multi-user.target

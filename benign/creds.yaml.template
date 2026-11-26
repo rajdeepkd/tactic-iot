@@ -1,0 +1,27 @@
+# Copy to creds.yaml (git-ignored) and fill in. Used by admin_session.py.
+# SYNTHETIC lab accounts only -- never real personal credentials (charter §11).
+# Prefer key_path (key-based auth, like real ops); `password` is present ONLY so
+# the fat-finger model can generate benign FAILED-auth events in auth.log.
+#
+# device_id: {host, ssh_user, password, key_path, port, telnet_user, telnet_password, telnet_port}
+rpi3b-1:
+  host: 10.0.0.11
+  ssh_user: pi
+  password: "REPLACE_synthetic_pw"       # for the successful login + typo model
+  key_path: "~/.ssh/testbed_ed25519"
+  port: 22
+  telnet_user: pi
+  telnet_password: "REPLACE_synthetic_pw"
+  telnet_port: 23
+rpi5-silo:
+  host: 10.0.0.12
+  ssh_user: pi
+  password: "REPLACE_synthetic_pw"
+  key_path: "~/.ssh/testbed_ed25519"
+  port: 22
+jetson-1:
+  host: 10.0.0.20
+  ssh_user: nano
+  password: "REPLACE_synthetic_pw"
+  key_path: "~/.ssh/testbed_ed25519"
+  port: 22

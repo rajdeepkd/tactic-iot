@@ -1,0 +1,11 @@
+[Unit]
+Description=Testbed auditd log -> structured NDJSON (execve/priv/auth), incremental
+After=auditd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/testbed/collectors/hostlog/auditlog_parser.py \
+    --out /var/log/testbed/hostlog \
+    --checkpoint /var/log/testbed/hostlog/.auditckpt
+# ausearch needs to read /var/log/audit/audit.log (root-only)
+User=root

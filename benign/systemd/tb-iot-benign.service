@@ -1,0 +1,18 @@
+[Unit]
+Description=TACTIC-IoT benign IoT client, hub -> victims (Objective 3 v2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/testbed/benign/run_iot_benign.sh
+Restart=always
+RestartSec=5
+Nice=10
+# the client loops are light, but cap them so benign traffic never starves the
+# hub's Zeek/attacker role during a campaign
+CPUQuota=30%
+MemoryMax=220M
+
+[Install]
+WantedBy=multi-user.target

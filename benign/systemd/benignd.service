@@ -1,0 +1,37 @@
+# Always-on benign workload daemon. Install on each victim board:
+#   sudo cp benignd.service /etc/systemd/system/
+#   sudo mkdir -p /etc/testbed && sudoedit /etc/testbed/benign.env   # see below
+#   sudo systemctl enable --now benignd
+#
+# /etc/testbed/benign.env (per board), e.g. for rpi3b-1:
+#   SELF_ID=rpi3b-1
+#   EXTRA=mirror_ip=10.0.0.1 mqtt_broker=10.0.0.11 svc_host=10.0.0.11 backup_host=10.0.0.1 ipcam_ip=10.0.0.30
+#
+# CRITICAL (anti-sessionisation, Phase-0 principle #1): this service is enabled
+# for the WHOLE campaign and is NEVER started/stopped per attack. Benign load
+# therefore spans attack AND quiet windows alike.
+[Unit]
+Description=Testbed hard benign workload daemon (Objective 3)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/testbed/benign.env
+WorkingDirectory=/opt/testbed/benign
+ExecStartPre=/usr/bin/env bash /opt/testbed/benign/record_env.sh /var/log/testbed/env
+ExecStart=/usr/bin/python3 /opt/testbed/benign/benignd.py \
+    --workloads /opt/testbed/benign/workloads.yaml \
+    --nodes /opt/testbed/nodes.yaml \
+    --self ${SELF_ID} \
+    --out /var/log/testbed/benign \
+    --extra ${EXTRA}
+Restart=always
+RestartSec=5
+Nice=5
+# resource guardrails so benign load never starves the collectors (esp. RPi 3B+)
+CPUQuota=60%
+MemoryMax=350M
+
+[Install]
+WantedBy=multi-user.target

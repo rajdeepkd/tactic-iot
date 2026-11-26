@@ -1,0 +1,180 @@
+# =============================================================================
+# Phase-1 scenario manifest  (schema_version 2 — STAGE-AWARE, concurrency-aware)
+# =============================================================================
+# The deterministic orchestrator (orchestrator.py, on the Windows control box)
+# owns the synced clock and writes ground-truth STAGE labels from this file.
+#
+# CANONICAL TAXONOMY lives in stages.yaml (S0..S12). This manifest REFERENCES it
+# (taxonomy_file below) — it does not redefine stages. Each stage entry's `stage:`
+# value MUST be a stage id from stages.yaml. The orchestrator loads stages.yaml
+# for the MITRE tactic + expected_primary_source of each stage.
+#
+# Design invariants (Phase-0 lessons, Charter):
+#   #1 NO sessionization      -> the benign subsystem (benignd.service +
+#      benign/workloads.yaml + benign/admin_session.py) is ALWAYS ON and runs
+#      through every attack window; the orchestrator only ASSERTS it is active in
+#      preflight and never starts/stops it.
+#   #2 Concurrency by design  -> each stage declares expected_modalities (>=2);
+#      the orchestrator's live validity gate flags a stage whose expected sources
+#      showed no reaction, and validate_alignment.py re-checks alignment.
+#   Label = lifecycle STAGE (not family / not benign-vs-malware, the P7 ceiling).
+#   primary source is the a-priori HYPOTHESIS (stages.yaml) — analysis metadata,
+#   never a feature, never the label source.
+#
+# INTEROP (do not break):
+#   * orchestrator.py writes BOTH labels.ndjson (rich provenance) and labels.csv
+#     (the columns pipeline/align_windows.py + validate_alignment.py consume:
+#     scenario_id,run_idx,attack_type,target,stage,start_iso,end_iso,start_ns,end_ns).
+#   * benign background is the benign/ subsystem (a sibling deliverable), NOT
+#     redefined here.
+#
+# SAFETY: this manifest only REFERENCES attacker actions by action_ref. Offensive
+# action programs are NOT authored here. Established authorized-testing tools
+# (nmap, hydra) are named at the methodology level; malware/C2/exfil/impact/
+# propagation actions point at operator-supplied, authorized programs that run
+# ONLY under the containment declared in actions: (air-gap + sinkhole + revertible
+# image). See Charter S11 + run_manifest provenance + the ethics gate.
+# =============================================================================
+
+schema_version: 2
+taxonomy_file: stages.yaml         # canonical S0..S12 taxonomy (single source of truth)
+
+campaign:
+  id_prefix: obj3
+  operator: testbed-operator
+  ethics_ref: "PENDING"            # REQUIRED (not empty/PENDING) before any requires_airgap stage
+  time_master: rpi5-hub            # its chrony-disciplined CLOCK_REALTIME is authoritative for labels
+
+defaults:
+  window_grid_s: [1, 5]            # feature-window sizes (matches pipeline/align_windows.py --window-s 1,5)
+  guard_pre_s: 2                   # trimmed off the FRONT of the raw interval -> CORE interval (settle latency)
+  guard_post_s: 3                  # trimmed off the END -> CORE interval (lingering effects)
+  inter_stage_gap_s: 30            # quiet gap between consecutive stages of one campaign
+  cooldown_s: 120                  # quiet gap after a whole campaign repeat
+  repeats: 3                       # campaign repeats (support); each repeat -> a distinct group_id
+  min_overlap_frac: 0.5            # window is a stage positive only if >=this fraction lies in the CORE interval
+
+# --- benign background (ALWAYS-ON; a sibling subsystem — referenced, not redefined) ---
+benign:
+  daemon_unit: benignd.service                 # preflight asserts is-active on each victim
+  workloads_file: benign/workloads.yaml        # hard-overlap workloads (P7 fix): proc-churn(static+dynamic),
+                                               # service traffic, legit discovery, backups, admin typo logins
+  admin_sessions: benign/admin_session.py      # runs from the Windows box (interleaves benign typo SSH logins)
+  admin_heartbeat: /var/log/testbed/benign/benign_activity.csv   # preflight checks freshness
+  victims: [rpi3b-1, rpi5-hub, jetson-1]
+
+# --- attacker-action registry (methodology-level references + containment) ----
+# action_ref -> {tool_category, invocation (placeholders resolved by orchestrator),
+# requires_airgap, containment, operator_supplied}. operator_supplied programs are
+# NOT authored by this layer; the orchestrator only launches the authorized program.
+actions:
+  nmap_syn_scan:
+    tool_category: "network scanner (authorized-testing)"
+    invocation: "nmap -sS -T2 -p- {target_ip}"
+    requires_airgap: false
+    containment: lab_subnet
+    operator_supplied: false
+  hydra_ssh_slow:
+    tool_category: "credential-audit tool (authorized-testing)"
+    invocation: "hydra -l pi -P /opt/wordlists/rockyou-small.txt -t 1 -W 25 -f ssh://{target_ip}"
+    requires_airgap: false
+    containment: lab_subnet
+    operator_supplied: false
+  valid_login:
+    tool_category: "authorized login with the discovered default credential (initial access)"
+    invocation: "/opt/attacks/valid_login.sh {target_ip}"      # operator-supplied; a legitimate SSH login, known cred
+    requires_airgap: false
+    containment: lab_subnet
+    operator_supplied: true
+  sample_transfer:
+    tool_category: "transfer of a known-provenance sample (chain-of-custody)"
+    invocation: "/opt/attacks/deliver_sample.sh {target_ip} {sample_id}"
+    requires_airgap: true
+    containment: airgap+revertible_image
+    operator_supplied: true
+  contained_run:
+    tool_category: "execute a curated malware sample inside a revertible victim"
+    invocation: "/opt/attacks/run_sample.sh {target_ip} {sample_id}"
+    requires_airgap: true
+    containment: airgap+revertible_image+egress_blocked
+    operator_supplied: true
+  contained_persist:
+    tool_category: "sample-induced persistence (cron/systemd/rc.local)"
+    invocation: "/opt/attacks/persist_probe.sh {target_ip} {sample_id}"
+    requires_airgap: true
+    containment: airgap+revertible_image
+    operator_supplied: true
+  emulated_c2_beacon:
+    tool_category: "emulated C2 (sinkholed; no real internet C2)"
+    invocation: "/opt/attacks/c2_beacon.py --c2 {sinkhole_ip} --interval 60 --jitter 15"
+    requires_airgap: true
+    containment: airgap+dns_sinkhole+emulated_c2
+    operator_supplied: true
+  contained_impact:
+    tool_category: "impact (DDoS to an in-lab emulated target OR resource-hijack), rate-bounded"
+    invocation: "/opt/attacks/impact_run.sh {target_ip} {sinkhole_ip}"   # bounded to isolated segment only
+    requires_airgap: true
+    containment: airgap+in_lab_target+rate_bounded
+    operator_supplied: true
+  contained_propagation:
+    tool_category: "victim-originated scan CONTAINED to the isolated segment / sinkhole"
+    invocation: "/opt/attacks/propagate_probe.sh {sinkhole_ip}"
+    requires_airgap: true
+    containment: airgap+isolated_segment
+    operator_supplied: true
+  low_slow_exfil:
+    tool_category: "low-and-slow exfil to the in-lab sink (no egress)"
+    invocation: "/opt/attacks/exfil_beacon.py --dst {sinkhole_ip} --interval 60 --size 512"
+    requires_airgap: true
+    containment: airgap+in_lab_sink
+    operator_supplied: true
+
+# --- attack campaigns: each is an ORDERED sequence of timed lifecycle stages ----
+# The orchestrator runs stages strictly in order, one window each, with
+# inter_stage_gap_s between them; benign background keeps running throughout.
+# `stage` values are stages.yaml ids. (S12 defense_evasion is an OVERLAY that
+# co-occurs with S5/S6 — captured as a tag by the collectors, not a timed stage.)
+scenarios:
+
+  # ---- flagship: full IoT-botnet kill chain on the 32-bit victim ----
+  - id: botnet_lifecycle
+    target: rpi3b-1
+    attacker: attacker-1
+    sample_id: null                 # set to a chain-of-custody sample id before delivery/execution stages
+    stages:
+      - { stage: S1_reconnaissance_scanning,  action_ref: nmap_syn_scan,        duration_s: 900,  expected_modalities: [network, host] }
+      - { stage: S2_bruteforce_credential_access, action_ref: hydra_ssh_slow,   duration_s: 3600, expected_modalities: [network, host, telemetry] }  # ★ flagship
+      - { stage: S3_exploitation_initial_access, action_ref: valid_login,       duration_s: 120,  expected_modalities: [network, host] }
+      - { stage: S4_delivery_download,         action_ref: sample_transfer,     duration_s: 120,  expected_modalities: [network, host] }
+      - { stage: S5_execution,                 action_ref: contained_run,       duration_s: 600,  expected_modalities: [host, telemetry] }
+      - { stage: S6_persistence,               action_ref: contained_persist,   duration_s: 120,  expected_modalities: [host] }
+      - { stage: S8_command_and_control,       action_ref: emulated_c2_beacon,  duration_s: 1800, expected_modalities: [network, telemetry] }
+      - { stage: S9_impact,                    action_ref: contained_impact,    duration_s: 600,  expected_modalities: [network, telemetry] }
+      - { stage: S10_propagation,              action_ref: contained_propagation, duration_s: 900, expected_modalities: [network, host] }
+      - { stage: S11_exfiltration,             action_ref: low_slow_exfil,      duration_s: 3600, expected_modalities: [network, host, telemetry] }
+
+  # ---- network-sufficient positive control (host adds ~0; expect network to win) ----
+  - id: recon_only_control
+    target: rpi3b-1
+    attacker: attacker-1
+    stages:
+      - { stage: S1_reconnaissance_scanning, action_ref: nmap_syn_scan, duration_s: 900, expected_modalities: [network, host] }
+
+  # ---- host-dominant control on the 64-bit victim (delivery+execution+persistence) ----
+  #      re-anchors P4/P6 (execution-stage host dominance) on REAL aarch64 hardware
+  - id: host_execution_control
+    target: rpi5-hub
+    attacker: attacker-1
+    sample_id: null
+    stages:
+      - { stage: S4_delivery_download, action_ref: sample_transfer, duration_s: 120, expected_modalities: [network, host] }
+      - { stage: S5_execution,         action_ref: contained_run,   duration_s: 600, expected_modalities: [host, telemetry] }
+      - { stage: S6_persistence,       action_ref: contained_persist, duration_s: 120, expected_modalities: [host] }
+
+  # ---- heavy-victim execution on Jetson (GPU/thermal signature; per-device baseline) ----
+  - id: jetson_execution
+    target: jetson-1
+    attacker: attacker-1
+    sample_id: null
+    stages:
+      - { stage: S5_execution, action_ref: contained_run, duration_s: 600, expected_modalities: [host, telemetry] }

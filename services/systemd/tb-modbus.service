@@ -1,0 +1,22 @@
+# Always-on Modbus/TCP device server (TACTIC-IoT v2). Install on each victim:
+#   sudo cp modbus_server.py /opt/testbed/services/
+#   sudo cp systemd/tb-modbus.service /etc/systemd/system/
+#   sudo systemctl enable --now tb-modbus
+[Unit]
+Description=TACTIC-IoT Modbus/TCP device server (Objective 3 v2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/testbed/services/modbus_server.py
+# port 502 is privileged; grant only the bind capability instead of full root
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Restart=always
+RestartSec=5
+Nice=5
+CPUQuota=25%
+MemoryMax=120M
+
+[Install]
+WantedBy=multi-user.target

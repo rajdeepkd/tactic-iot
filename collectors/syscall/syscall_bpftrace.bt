@@ -1,0 +1,20 @@
+#!/usr/bin/env bpftrace
+/*
+ * syscall_bpftrace.bt -- one-file bpftrace alternative to the BCC collector,
+ * for RPi 5 (kernel 6.x, BTF available) where bpftrace installs cleanly. Prints
+ * one line per syscall entry: monotonic-ns, tgid, pid, syscall-number, comm.
+ * A tiny shell wrapper turns each printed line into the NDJSON schema, or pipe
+ * through `syscall_windowizer.py --format bpftrace`.
+ *
+ * We aggregate NOTHING in-kernel (we need the ordered per-process stream to
+ * build 20-syscall windows), so this is a per-event printf. On lightly loaded
+ * IoT boards the syscall rate is modest; if it is not, prefer the BCC collector
+ * (perf ring + userspace batching) or perf record.
+ *
+ * Run:  sudo bpftrace syscall_bpftrace.bt | ...
+ * Note: $1 (pid to exclude) should be this pipeline's pid; pass via env if used.
+ */
+tracepoint:raw_syscalls:sys_enter
+{
+    printf("%lld %d %d %d %s\n", nsecs, tid, pid, args->id, comm);
+}

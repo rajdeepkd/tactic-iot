@@ -1,0 +1,29 @@
+# mediamtx_tactic.yml -- TACTIC-IoT v2 RTSP camera server config.
+# mediamtx is a single static arm64 binary (download the release, verify the
+# checksum, copy to /opt/testbed/bin/mediamtx on the victim). This config serves
+# ONE looped, pre-encoded low-bitrate clip with `-c copy` (NO transcode), so a
+# 0.9 GB Pi 3B sustains a continuous stream. The benign RTSP pull from the hub
+# gives steady high-volume egress on the victim capture, which removes the v1
+# "benign too network-quiet" confound. rtsp_url_brute / unauthorized stream pull
+# are the protocol attacks against it.
+
+rtspAddress: :8554
+# RTP/RTCP use mediamtx defaults (:8000 / :8001). Newer mediamtx renamed these
+# keys (rtpAddress/rtcpAddress) and rejects the old rtp/rtcp names, so we omit
+# them and keep the defaults.
+# keep the other servers off (we only need RTSP)
+hls: no
+webrtc: no
+rtmp: no
+api: no
+metrics: no
+logLevel: warn
+
+paths:
+  stream1:
+    # ffmpeg copies a pre-encoded clip on loop into the path (no CPU-heavy encode).
+    # Prepare /opt/testbed/media/clip.ts once (a few seconds of low-res H.264).
+    runOnInit: >
+      ffmpeg -re -stream_loop -1 -i /opt/testbed/media/clip.ts
+      -c copy -f rtsp rtsp://localhost:8554/stream1
+    runOnInitRestart: yes

@@ -1,0 +1,15 @@
+[Unit]
+Description=Testbed per-device config snapshot + ABI syscall table (oneshot at boot)
+After=auditd.service chrony.service
+Wants=auditd.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/testbed/collectors/meta/record_device_meta.sh /var/log/testbed/meta
+# Records RAM/kernel/governor/process-set (P5 nuisance vars) and saves
+# ausyscall --dump for the windowizer. Run once per boot; the orchestrator
+# additionally triggers `record_device_meta.sh ... --baseline` at campaign start.
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

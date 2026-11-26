@@ -1,0 +1,23 @@
+[Unit]
+Description=Testbed always-on syscall event collector (eBPF/perf -> NDJSON)
+After=network-online.target chrony.service
+Wants=chrony.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/testbed/testbed.env
+# $SYSCALL_CMD selects eBPF (BCC) or perf per board (see testbed.env)
+ExecStart=/bin/sh -c 'exec $SYSCALL_CMD'
+Restart=always
+RestartSec=3
+# eBPF/perf need these; keep the box otherwise unprivileged
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE
+# never let the collector be the thing that kills a slow board
+Nice=5
+IOSchedulingClass=idle
+OOMScoreAdjust=-500
+# Phase-0 principle #1: ALWAYS ON. Do NOT stop this per attack.
+
+[Install]
+WantedBy=multi-user.target

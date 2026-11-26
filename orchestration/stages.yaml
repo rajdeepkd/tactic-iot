@@ -1,0 +1,474 @@
+# =====================================================================
+# Phase-1 ATTACK-LIFECYCLE STAGE TAXONOMY  (declarative labelling vocabulary)
+# Objective 3 — multimodal IoT IDS testbed.  DEFENSIVE artifact only:
+# this file defines the ground-truth STAGES the orchestrator stamps and the
+# labelling/fusion pipeline consumes. It contains NO attack code; attacker
+# behaviour is referenced only at the methodology level (tool CATEGORIES that
+# already live, contained, in scenarios.yaml + charter §11).
+#
+# WHY STAGES (not just scenarios):  CIC-YNU-IoTMal 2026 captures exactly ONE
+# lifecycle stage — a binary EXECUTING ALONE post-delivery (stage `execution`),
+# on emulated QEMU, with family labels but NO sub-stage labels (CIC audit §1).
+# Our pilots P4/P6 showed that at THAT stage host syscalls carry the signal and
+# network adds ~0 usable information (I(Y;N|S) CI includes 0). The falsifiable
+# thesis claim is therefore NOT "network helps family attribution" (rejected)
+# but STAGE-DEPENDENT source complementarity: which source carries the evidence
+# FLIPS across the lifecycle. This taxonomy makes that claim measurable by
+# labelling each stage the testbed exercises so per-stage, per-source recall and
+# usable/conditional information can be estimated (metrics of record).
+#
+# GROUNDING (coverage literature, do not re-derive):
+#   - Tan et al. 2026 (SynthChain): no single telemetry source recovers >40% of
+#     attack steps; fusing TWO COMPLEMENTARY sources improves reconstruction
+#     ~1.6x; WHICH sources matter more than HOW MANY. -> motivates per-stage
+#     source assignment + the fusion (synergy) hypotheses below.
+#   - Alrawi et al., USENIX Security 2021 (166K IoT malware): lifecycle =
+#     infection -> payload -> persistence -> C&C; drives the stage list.
+#   - Antonakakis et al. 2017 (Mirai): scan -> brute-force -> report -> loader
+#     download -> execute -> C2 -> DDoS -> re-scan/propagate = the kill chain.
+#   - Provenance/host stage reconstruction: HOLMES 2019, SLEUTH 2017,
+#     TRACE 2021 (>80% of stages recoverable from host audit).
+#   - Multi-datasource ATT&CK-labelled work: Hwang 2023; Lin 2022/2024;
+#     Yudha 2025 (technique + lifecycle labels); Almgren 2007 (audit-source cmp).
+#   - CAVEAT stated in that literature and adopted here: stage->source maps are
+#     TENDENCIES, not partitions; classifier F1 != observability coverage.
+#
+# EMPIRICAL LESSONS NEUTRALISED (P5/P6/P7): labels are STAGE-level (not
+# family/benign-vs-malware, the P7 ceiling task); benign background (S0) is
+# always-on and behaviourally overlapping so no stage is idle-vs-busy separable;
+# telemetry predictions are gated on identical device config + per-device benign
+# baseline in the SAME campaign, else its apparent signal is a device fingerprint
+# (P5). See device_config_metadata at the foot of this file.
+# =====================================================================
+
+taxonomy_version: "1.1"   # 1.1 = reconciled to the no-malware tool-based fleet (2026-09-29)
+att_ck_version: "enterprise-17 (IoT/Linux-relevant techniques)"
+
+# ---------------------------------------------------------------------
+# SCOPE (v1.1): NO live malware. Every stage is realised with GENERIC,
+# operator-driven TOOLS (nmap/hydra/hping3/ettercap + host actions over SSH),
+# timestamped by run_action.sh -> labels.csv. Stages that intrinsically need a
+# running malware implant are OUT-OF-SCOPE and carry no records. Fleet = 2 RPi-3B
+# victims (rpi3b1/rpi3b2) + rpi5-hub (attacker/collector/time-master). No Jetson,
+# no IP camera, no INA power.
+# ---------------------------------------------------------------------
+stage_scope:
+  in_scope:
+    S0_baseline_benign:            "quiescent + benign daemons/admin (the negative class)"
+    S1_reconnaissance_scanning:    "nmap -sS / -sV (network: conn S0/REJ flood, weird)"
+    S2_bruteforce_credential_access: "hydra ssh (network ssh auth_fail flood + host journald auth_fail)"
+    S5_execution:                  "post-access command execution over SSH (host: auditd execve)"
+    S6_persistence:                "crontab / systemd unit / authorized_keys add (host: auditd tb_persist/tb_identity)"
+    S7_privilege_escalation:       "sudo -n / SUID discovery (host: auditd tb_priv)"
+    S9_impact:                     "hping3 SYN flood (DDoS) + stress-ng CPU hog as resource-hijack analogue (telemetry-unique)"
+    S10_propagation:               "victim-as-attacker lateral nmap rpi3b1<->rpi3b2 (optional)"
+    S12_defense_evasion:           "log truncation / timestomp on victim (overlay; optional)"
+  out_of_scope:                    # intrinsically require a live implant; no records emitted
+    S3_exploitation_initial_access: "no CVE exploitation; credentialed access via S2 success stands in"
+    S4_delivery_download:          "optional benign ingress transfer (scp/wget of a tool) only; no payload"
+    S8_command_and_control:        "no C2 implant/beacon (would be fabricated) -> DROPPED"
+    S11_exfiltration:              "optional generic file egress only; no covert channel"
+
+# ---------------------------------------------------------------------
+# SOURCE LEGEND  — the three modalities whose per-stage evidence we predict.
+# ---------------------------------------------------------------------
+sources:
+  network:
+    collector: "on-victim tcpdump (nanosecond pcap, tb-capture.service) -> shipped to rpi5-hub -> OFFLINE Zeek 9.0 (victims are 0.9 GB RAM: NO on-board Zeek)"
+    logs: [conn, ssh, dns, http, weird]      # behavioural COUNTERS only; identity strings (IPs/URIs/qnames/JA3) dropped (P7)
+    features: "net__ flow + scan(S0/REJ) + ssh auth_ok/fail + dns nxdomain + http 4xx/5xx + weird counts (align_windows.read_zeek_all)"
+    role: "remote-interaction evidence: who talks to/from the device, how"
+  host:
+    collector: "auditd (testbed_v1.rules: execve/execveat, setuid/setgid/capset, watches on passwd/shadow/sudoers/ssh/cron) + journald (sshd-session auth, sudo, cron)"
+    logs: [auditd, journald]                  # NO osquery, NO eBPF: no BTF on any board -> auditd is the only portable syscall source
+    features: "host__ execve/priv counts + auth_ok/auth_fail/invalid_user/new_session (align_windows.read_auditd + read_journald)"
+    role: "on-host behaviour + auth context: what the device actually does/runs"
+  telemetry:
+    collector: "collectors/telemetry_reader.py @ 2 Hz (tb-telemetry.service, --power none = THERMAL-ONLY, D5): cpu_pct, mem_pct, load1/5/15, temp_c, ARM freq/volt, throttle, nprocs, net_tx/rx_bps, disk_r/w_bps. INA219/260 power NOT wired."
+    logs: [telemetry_csv]
+    guard: "valid only WITHIN identical device config + per-device benign baseline THIS campaign, else it is a device fingerprint (P5)."
+    role: "physical side-channel: compute/energy/thermal cost of activity"
+
+# ---------------------------------------------------------------------
+# LABEL SCHEMA  — how stages are recorded (extends the existing labels.csv).
+# ---------------------------------------------------------------------
+label_schema:
+  granularity: >
+    STAGES are sub-scenario. A campaign traverses many stages in sequence. The
+    orchestrator emits a STAGE TIMELINE: run_action.sh writes one row per attacker
+    sub-action (scenario_id, run_idx, attack_type, target, stage, start_iso,
+    end_iso) to `labels.csv` on the rpi5-hub MASTER clock. Windows are labelled by
+    interval-join (align_windows.label_window); benign = overlaps no interval.
+  multi_label: >
+    S0 (baseline_benign) is ALWAYS active (always-on benign load), so every
+    window carries S0 plus zero-or-more active attack stages. Labels are
+    MULTI-HOT over stage_id, not exclusive. defense_evasion co-occurs with other
+    stages and is an overlay tag.
+  split_policy: >
+    Grouping unit = (target_device, scenario_run) session; splits are grouped by
+    session and temporally honest (P7 anti-leakage: window-level random splits
+    cost up to 0.35 macro-F1). Drop IPs/timestamps/high-card strings (P0 policy).
+  modality_mask: >
+    Carried per window (order net|host|tel); encodes GENUINELY-absent modalities
+    (e.g. a window with host events but no captured flow) so missing-modality
+    evaluation is meaningful. No IP camera in this fleet.
+
+# ---------------------------------------------------------------------
+# STAGES.  expected_primary_source is the FALSIFIABLE prediction the dataset
+# tests. info_prediction states the usable/conditional-information ranking we
+# expect (estimated in the V-information style of the pilots), per source, per
+# stage. fusion_role classifies the stage as network-sufficient / host-sufficient
+# / ambiguous-fusion-resolved / telemetry-unique.
+# ---------------------------------------------------------------------
+stages:
+
+  - id: S0_baseline_benign
+    name: Baseline / benign operations
+    kill_chain: "(none) normal device operation"
+    mitre_tactic: "N/A (defines the negative class + FPR baseline)"
+    mitre_techniques: []
+    expected_primary_source: all
+    expected_secondary_source: null
+    network_evidence: "benign service flows: MQTT publish/subscribe, HTTP, DNS, NTP, DHCP, occasional legitimate SSH/Telnet admin logins (incl. typos)"
+    host_evidence: "cron jobs spawning helper processes, package/update activity, successful logins in auth.log, steady process set"
+    telemetry_evidence: "idle-to-moderate CPU/mem baseline with diurnal load; per-device baseline recorded THIS campaign"
+    cic_ynu_coverage: "present but CONFOUNDED (benign = LLM-written dynamically-linked C, captured Jan-2026, near-idle; never scans). Testbed replaces it with HARD, behaviourally-overlapping benign daemons: busybox, dropbear, mosquitto, lighttpd, plus admin scanning-like discovery + typo'd logins."
+    hypothesis: "Defines the null. A fair test requires benign that OVERLAPS each attack stage behaviourally so no stage is separable by activity level alone (neutralises P7 confounds a-d)."
+    info_prediction: "n/a (reference class); FPR of every per-stage detector measured against S0."
+    fusion_role: baseline
+    per_board:
+      rpi3b_plus: "busybox+dropbear+mosquitto; weak Cortex-A53 makes benign vs attack telemetry overlap tighter (good)."
+      rpi5: "heavier benign mix (lighttpd + mosquitto + periodic apt); represents a busy edge gateway."
+      jetson_nano: "GPU inference workload as benign compute so cryptomining (S9) is not trivially separable from legitimate GPU load."
+
+  - id: S1_reconnaissance_scanning
+    name: Reconnaissance / port & service scanning
+    kill_chain: "Mirai: rapid SYN scanning of Telnet/SSH; IoT KC: victim discovery"
+    mitre_tactic: "Reconnaissance (TA0043) / Discovery (TA0007)"
+    mitre_techniques:
+      - "T1595 Active Scanning (.001 Scanning IP Blocks, .002 Vulnerability Scanning)"
+      - "T1046 Network Service Discovery"
+    expected_primary_source: network
+    expected_secondary_source: host
+    network_evidence: "Zeek conn.log: many short-lived flows, conn_state S0/REJ/RSTOS0, high dest-port or dest-host fan-out, low bytes/flow, SYN-dominant history; weird.log; notice.log Scan::* if enabled"
+    host_evidence: "WEAK — victim only logs inbound connection attempts (auditd accept/connect on listeners, sshd 'Did not receive identification string'); the scanner PROCESS runs off-host, so no local execve"
+    telemetry_evidence: "negligible (tiny NIC rx uptick)"
+    cic_ynu_coverage: "PRESENT-BUT-UNLABELLED: CIC-YNU malware windows are 52-97% Telnet scanning (egress, from the running binary) but inherit only the family label, never a 'scan' stage label -> exactly the gap stage labels close."
+    hypothesis: "H-NET: network is SUFFICIENT for scanning; host adds ~0. Falsified if host-only per-stage recall >= network-only, or I(S1;host|net) CI excludes 0."
+    info_prediction: "I(S1;net) HIGH; I(S1;host|net) ~ 0; I(S1;telem|net) ~ 0. Positive control (the network-dominant analogue of P6's host-dominant execution stage)."
+    fusion_role: network_sufficient
+    per_board:
+      rpi3b_plus: "inbound scan target (flagship victim); Zeek on wlan0/eth0."
+      rpi5: "inbound scan target; full Zeek."
+      jetson_nano: "inbound scan target."
+
+  - id: S2_bruteforce_credential_access
+    name: Brute-force / credential access (the flagship ambiguous stage)
+    kill_chain: "Mirai: dictionary login against default creds on Telnet/SSH"
+    mitre_tactic: "Credential Access (TA0006)"
+    mitre_techniques:
+      - "T1110 Brute Force (.001 Password Guessing, .003 Password Spraying)"
+      - "T1078 Valid Accounts (.001 Default Accounts) on success"
+    expected_primary_source: host
+    expected_secondary_source: telemetry
+    network_evidence: "WEAK/AMBIGUOUS for SLOW brute (1 try / 20-30 s): a handful of short SSH/Telnet flows indistinguishable from benign logins; Zeek ssh.log auth_attempts is informative only for FAST brute"
+    host_evidence: "DECISIVE — auth.log 'Failed password'/'Invalid user' CADENCE and count; osquery logged_in_users/last; auditd on sshd; a single failure ~ a typo until the FAILURE-RATE pattern is seen"
+    telemetry_evidence: "sshd CPU/power micro-blips per attempt (corroborating; strongest when benign login rate is low)"
+    cic_ynu_coverage: "ABSENT — no auth.log, no on-victim login attempts in CIC-YNU. Only the testbed can produce this stage."
+    hypothesis: "H-FUSION (flagship): slow brute-force is AMBIGUOUS in network alone and RESOLVED by host (+telemetry). Prediction: network-only per-stage recall ~ baseline; host-only high; fusion TPR@1%FPR > best single. Falsified if network-only already separates slow-brute from benign typo logins."
+    info_prediction: "I(S2;net) LOW (slow regime); I(S2;host) HIGH; I(S2;host|net) >> 0; synergy(net,telem|host) small but >0. This is the single clearest falsification of 'network suffices'."
+    fusion_role: ambiguous_fusion_resolved
+    per_board:
+      rpi3b_plus: "PRIMARY flagship victim — dropbear/openssh; interleave benign typo logins from the load generator so failures are not trivially attacker-only."
+      rpi5: "secondary victim (openssh) for a second domain."
+      jetson_nano: "optional victim; L4T default user context differs (record in metadata)."
+
+  - id: S3_exploitation_initial_access
+    name: Exploitation / initial access
+    kill_chain: "successful login (valid default creds) OR service exploit"
+    mitre_tactic: "Initial Access (TA0001)"
+    mitre_techniques:
+      - "T1190 Exploit Public-Facing Application"
+      - "T1133 External Remote Services"
+      - "T1078.001 Default Accounts (Mirai-style)"
+    expected_primary_source: host
+    expected_secondary_source: network
+    network_evidence: "the exploit REQUEST / anomalous payload (Zeek http.log/weird.log; oversized or malformed request); a successful auth handshake — but network cannot confirm the exploit LANDED"
+    host_evidence: "CONFIRMATION — auth.log 'Accepted password/publickey'; a service daemon spawning an anomalous CHILD process (auditd execve with unexpected parent, e.g. sshd/lighttpd -> /bin/sh); crash+restart in journald"
+    telemetry_evidence: "minor: possible service crash/restart signature (load blip)"
+    cic_ynu_coverage: "ABSENT — CIC-YNU begins AFTER initial access (binary already delivered)."
+    hypothesis: "H-FUSION: network flags the ATTEMPT, host confirms SUCCESS ('did it land?'). Prediction: synergy(net,host) > 0; neither alone gives high precision. Falsified if network-only distinguishes successful from failed exploitation."
+    info_prediction: "I(S3;net) MODERATE (attempt visible); I(S3;host) MODERATE-HIGH (success visible); positive synergy — the 'landed?' bit is joint."
+    fusion_role: ambiguous_fusion_resolved
+    per_board:
+      rpi3b_plus: "default-cred initial access (Mirai analogue)."
+      rpi5: "public-facing-service exploit analogue (lighttpd)."
+      jetson_nano: "remote-service access analogue."
+
+  - id: S4_delivery_download
+    name: Delivery / payload download (ingress transfer)
+    kill_chain: "Mirai loader fetches architecture-specific binary (wget/tftp/curl)"
+    mitre_tactic: "Command and Control (TA0011)"
+    mitre_techniques:
+      - "T1105 Ingress Tool Transfer"
+    expected_primary_source: both  # network AND host, at the hand-off boundary
+    expected_secondary_source: telemetry
+    network_evidence: "STRONG — Zeek http.log/files.log or tftp: GET of an executable, application/octet-stream, ELF magic in files.log; conn to a download server; DNS resolve of the payload host"
+    host_evidence: "STRONG — auditd open/creat/write of a new file in /tmp, /var/run, /dev/shm; subsequent chmod +x (fchmodat); osquery FIM file_event"
+    telemetry_evidence: "minor disk_w_bps + net_rx_bps uptick"
+    cic_ynu_coverage: "PARTIAL — the sandbox performed delivery BEFORE capture; the fetched binary is what CIC-YNU detonates, but the download EVENT itself is not in the released data."
+    hypothesis: "H-BOTH: delivery is the HAND-OFF where network (download flow) and host (file write + chmod) are BOTH strong and mutually corroborating. Prediction: network-only and host-only both high; fusion adds robustness not raw recall. Falsified if one source misses the transfer entirely."
+    info_prediction: "I(S4;net) HIGH and I(S4;host) HIGH; largely REDUNDANT (low synergy) — a redundancy control that contrasts with S2/S3 synergy."
+    fusion_role: both_strong_redundant
+    per_board:
+      rpi3b_plus: "armv7 (32-bit) payload — the real-hardware analogue of CIC-YNU's ARM 32-bit subset; ELF class recorded."
+      rpi5: "aarch64 payload; cgroup v2; full files.log."
+      jetson_nano: "aarch64 payload; L4T userspace."
+
+  - id: S5_execution
+    name: Execution (the CIC-YNU stage; controlled baseline)
+    kill_chain: "Mirai payload executes; kills competitors; forks"
+    mitre_tactic: "Execution (TA0002)"
+    mitre_techniques:
+      - "T1059 Command and Scripting Interpreter"
+      - "T1106 Native API"
+    expected_primary_source: host
+    expected_secondary_source: telemetry
+    network_evidence: "WEAK for family/behaviour ATTRIBUTION (P6: I(Y;N|S) ~ 0). Any network in this window is really S8/S10 behaviour of the running process, not the execution act itself."
+    host_evidence: "DECISIVE — auditd execve chain, process tree, library/loader syscalls, T1489 kill of competing processes; strace/eBPF execsnoop. This is where the CIC-YNU syscall signal lives."
+    telemetry_evidence: "CPU/mem SPIKE (secondary). P5 WARNING: on emulated data this was ~93% architecture fingerprint; here it is gated on identical config + same-campaign per-device baseline."
+    cic_ynu_coverage: "DIRECTLY REPRESENTED — this is the ONLY stage CIC-YNU captures (binary alone, ~120 s). Testbed replicates it on REAL ARM32/ARM64 hardware to bridge emulated->physical and re-anchor P4/P6 as the execution-stage baseline."
+    hypothesis: "H-HOST (baseline replication): host is SUFFICIENT for execution-stage attribution; network adds ~0. Prediction: I(S5;net|host) CI includes 0 on REAL hardware (replicates P6). Falsified if network gains usable info about execution on real hw that it lacked in emulation."
+    info_prediction: "I(S5;host) HIGH; I(S5;net|host) ~ 0; I(S5;telem|host) small and NON-TRANSFERABLE across boards unless config-controlled. Mirror image of S1."
+    fusion_role: host_sufficient
+    per_board:
+      rpi3b_plus: "armv7l 32-bit ABI (chown32/mmap2) — the real analogue of CIC-YNU ARM; syscall harmonisation reused from P4."
+      rpi5: "aarch64 ABI; full eBPF/BTF for CO-RE execsnoop."
+      jetson_nano: "aarch64; L4T kernel 4.9 has NO BTF -> use auditd+strace(+bcc w/ kernel headers), NOT CO-RE eBPF (see collector_constraints)."
+
+  - id: S6_persistence
+    name: Persistence
+    kill_chain: "init/cron/rc entries (Bashlite-style); Mirai itself is mostly memory-resident"
+    mitre_tactic: "Persistence (TA0003)"
+    mitre_techniques:
+      - "T1543 Create or Modify System Process (.002 systemd service)"
+      - "T1053.003 Scheduled Task/Job: Cron"
+      - "T1037.004 Boot/Logon Init Scripts: RC Scripts"
+      - "T1098.004 Account Manipulation: SSH authorized_keys"
+    expected_primary_source: host
+    expected_secondary_source: null
+    network_evidence: "NONE — persistence is a purely local state change"
+    host_evidence: "DECISIVE — auditd/FIM writes to /etc/rc.local, /etc/systemd/system/*.service, crontab, ~/.ssh/authorized_keys; osquery crontab/startup_items/authorized_keys tables; execve of systemctl/crontab"
+    telemetry_evidence: "negligible"
+    cic_ynu_coverage: "ABSENT — no persistence stage in a 120 s isolated detonation."
+    hypothesis: "H-HOST (network-blind): persistence is INVISIBLE to network; host-only recall high, network-only ~ baseline. Falsified if any network feature detects persistence above chance."
+    info_prediction: "I(S6;host) HIGH; I(S6;net) ~ 0 (near-exactly zero — strongest network-blind claim); I(S6;telem) ~ 0."
+    fusion_role: host_sufficient
+    per_board:
+      rpi3b_plus: "systemd + cron + rc.local + dropbear authorized_keys."
+      rpi5: "systemd (cgroup v2) service persistence; osquery startup_items."
+      jetson_nano: "systemd + L4T-specific init; record which init entries are stock vs added."
+
+  - id: S7_privilege_escalation
+    name: Privilege escalation
+    kill_chain: "not core to Mirai (already root via default creds) but general IoT KC"
+    mitre_tactic: "Privilege Escalation (TA0004)"
+    mitre_techniques:
+      - "T1548.003 Abuse Elevation Control Mechanism: Sudo and Sudo Caching"
+      - "T1068 Exploitation for Privilege Escalation"
+      - "T1547.006 Kernel Modules and Extensions"
+    expected_primary_source: host
+    expected_secondary_source: null
+    network_evidence: "NONE (local)"
+    host_evidence: "DECISIVE — auditd setuid/setgid/setresuid, capset, ptrace, init_module/finit_module (kernel module load), sudo events in auth.log; osquery process euid transitions"
+    telemetry_evidence: "negligible; a kernel-exploit crash may show a load blip"
+    cic_ynu_coverage: "ABSENT."
+    hypothesis: "H-HOST (network-blind): host-only detects priv-esc; network ~ baseline. Falsified if network detects a local euid transition."
+    info_prediction: "I(S7;host) HIGH; I(S7;net) ~ 0; I(S7;telem) ~ 0."
+    fusion_role: host_sufficient
+    per_board:
+      rpi3b_plus: "setuid/module-load audit rules; 32-bit syscall numbers."
+      rpi5: "aarch64 audit rules; capset/ptrace."
+      jetson_nano: "aarch64; note out-of-tree NVIDIA modules are STOCK — baseline them so added modules stand out."
+
+  - id: S8_command_and_control
+    name: Command and control (incl. stealthy beaconing)
+    kill_chain: "Mirai bot connects to C2, awaits commands"
+    mitre_tactic: "Command and Control (TA0011)"
+    mitre_techniques:
+      - "T1071 Application Layer Protocol (.001 Web, .004 DNS)"
+      - "T1571 Non-Standard Port"
+      - "T1095 Non-Application Layer Protocol"
+      - "T1102 Web Service / T1008 Fallback Channels"
+    expected_primary_source: network
+    expected_secondary_source: host
+    network_evidence: "STRONG for overt C2 — Zeek conn.log PERIODICITY/beacon interval, small regular payloads, ssl.log JA3/JA3S, dns.log rare/algorithmic domains, non-standard ports; AMBIGUOUS for low-and-slow encrypted beacon (looks benign)"
+    host_evidence: "CORROBORATION — osquery open_sockets bound to the C2 endpoint, auditd connect() syscalls, the resident process holding the socket"
+    telemetry_evidence: "periodic tiny CPU/net/power signature (the beacon heartbeat) — useful for STEALTH C2"
+    cic_ynu_coverage: "PRESENT-BUT-UNLABELLED (live-internet detonations produced real C2/beacon traffic, unlabelled at stage level)."
+    hypothesis: "H-NET for OVERT C2 (network sufficient); H-FUSION for STEALTH C2 (network ambiguous, host socket-attribution + telemetry periodicity resolve). Prediction: overt -> I(S8;net) high, host adds little; stealth -> synergy>0. Falsified if stealthy beacon is network-separable alone."
+    info_prediction: "Overt: I(S8;net) HIGH, I(S8;host|net) small. Stealth: I(S8;net) LOW, I(S8;host)+I(S8;telem) carry it -> fusion resolves."
+    fusion_role: network_sufficient (overt) / ambiguous_fusion_resolved (stealth)
+    per_board:
+      rpi3b_plus: "emulated-C2 / DNS-sinkhole endpoint on the isolated segment (containment)."
+      rpi5: "same; TLS beacon variant for JA3 story."
+      jetson_nano: "same."
+
+  - id: S9_impact
+    name: Impact — DDoS generation OR resource hijacking (cryptomining)
+    kill_chain: "Mirai launches DDoS on command; other families mine"
+    mitre_tactic: "Impact (TA0040)"
+    mitre_techniques:
+      - "T1498 Network Denial of Service"
+      - "T1499 Endpoint Denial of Service"
+      - "T1496 Resource Hijacking (cryptomining)"
+    expected_primary_source: telemetry  # unique-information stage for telemetry
+    expected_secondary_source: network
+    network_evidence: "DDoS sub-type: STRONG (massive outbound flow volume/rate, spoofed/uniform dest). Mining sub-type: WEAK (only sporadic pool traffic)."
+    host_evidence: "the miner/flooder PROCESS (execve, tight syscall loop); moderate"
+    telemetry_evidence: "DECISIVE for mining — SUSTAINED high cpu_pct, elevated temp_c, high power (INA219), governor pinned; DDoS -> NIC saturation (net_tx_bps) + CPU. This is the stage where telemetry carries UNIQUE information."
+    cic_ynu_coverage: "ABSENT as a labelled stage (isolated 120 s runs rarely reach commanded impact)."
+    hypothesis: "H-TELEM-UNIQUE: for resource-hijacking, telemetry carries UNIQUE information not in network or host counts (sustained thermal/energy). Prediction: I(S9_mining;telem|net,host) > 0 AFTER config control; DDoS -> network+telemetry both strong. Falsified if telemetry's S9 signal is explained by a device-fingerprint baseline (P5 guard)."
+    info_prediction: "Mining: I(S9;telem) HIGH and UNIQUE; I(S9;net) low. DDoS: I(S9;net) HIGH + I(S9;telem) HIGH (NIC/CPU). The only stage where telemetry is predicted to be primary."
+    fusion_role: telemetry_unique (mining) / network_plus_telemetry (DDoS)
+    per_board:
+      rpi3b_plus: "weak Cortex-A53 => thermal/power impact MOST visible; ideal mining-telemetry victim; DDoS bounded to isolated segment/emulated target only."
+      rpi5: "higher headroom; sustained load still clearly thermal-visible."
+      jetson_nano: "GPU present => GPU-mining telemetry (tegra GPU thermal zones, nvpmodel/tegrastats) is a UNIQUE story vs benign GPU inference (S0); strongest telemetry-unique case."
+
+  - id: S10_propagation
+    name: Propagation / lateral movement (victim-as-attacker)
+    kill_chain: "Mirai bot resumes scanning to infect further hosts"
+    mitre_tactic: "Lateral Movement (TA0008) / Discovery (TA0007)"
+    mitre_techniques:
+      - "T1210 Exploitation of Remote Services"
+      - "T1046 Network Service Discovery (now EGRESS from the victim)"
+    expected_primary_source: network
+    expected_secondary_source: host
+    network_evidence: "STRONG — OUTBOUND scan from the victim: same S1 signature but egress; Zeek conn.log high outbound fan-out, SYN-dominant"
+    host_evidence: "PROCESS ATTRIBUTION — auditd many connect() from ONE local pid, osquery open_sockets; answers 'which local process is scanning' (network alone cannot)"
+    telemetry_evidence: "moderate CPU + net_tx_bps"
+    cic_ynu_coverage: "PRESENT-BUT-UNLABELLED (the egress Telnet scanning that dominates CIC-YNU malware windows is really propagation, unlabelled)."
+    hypothesis: "H-NET primary, host for attribution. Prediction: I(S10;net) HIGH (detects the scan); host adds the culprit-process bit (attribution, not detection). Falsified if network fails to detect victim-originated scanning."
+    info_prediction: "I(S10;net) HIGH; I(S10;host|net) small but nonzero (process attribution). Symmetric to S1 but egress."
+    fusion_role: network_primary_host_attribution
+    per_board:
+      rpi3b_plus: "outbound scan CONTAINED to the isolated segment / sinkhole only."
+      rpi5: "same containment."
+      jetson_nano: "same containment."
+
+  - id: S11_exfiltration
+    name: Exfiltration (low-and-slow)
+    kill_chain: "data theft over C2 or covert channel"
+    mitre_tactic: "Exfiltration (TA0010)"
+    mitre_techniques:
+      - "T1041 Exfiltration Over C2 Channel"
+      - "T1048 Exfiltration Over Alternative Protocol"
+      - "T1071.004 DNS (tunneling)"
+    expected_primary_source: host
+    expected_secondary_source: telemetry
+    network_evidence: "AMBIGUOUS for low-and-slow — small periodic DNS/HTTPS beacons look benign on the wire (this was TON_IoT's and CIC-YNU's blind spot by design)"
+    host_evidence: "the reading process + its socket: osquery process<->open_socket join, auditd read()+sendto() pairing, file access to sensitive paths"
+    telemetry_evidence: "periodic small net_tx + power signature (the beacon cadence)"
+    cic_ynu_coverage: "ABSENT."
+    hypothesis: "H-FUSION (flagship #2, scenario exfil_low_slow): stealth exfil is network-ambiguous and RESOLVED by host process/socket + telemetry periodicity. Prediction: network-only ~ baseline; fusion TPR@1%FPR high. Falsified if network alone separates low-and-slow exfil from benign beacons."
+    info_prediction: "I(S11;net) LOW; I(S11;host) MODERATE-HIGH; synergy(host,telem) > 0. Parallels S2 in structure (network-ambiguous, fusion-resolved)."
+    fusion_role: ambiguous_fusion_resolved
+    per_board:
+      rpi3b_plus: "beacon to emulated collector on isolated segment (contained)."
+      rpi5: "same."
+      jetson_nano: "same."
+
+  - id: S12_defense_evasion
+    name: Defense evasion (OVERLAY — co-occurs with other stages)
+    kill_chain: "Mirai deletes its binary, hides process, kills competitors/security"
+    mitre_tactic: "Defense Evasion (TA0005)"
+    mitre_techniques:
+      - "T1070.004 Indicator Removal: File Deletion"
+      - "T1562.001 Impair Defenses: Disable or Modify Tools"
+      - "T1489 Service Stop"
+      - "T1036 Masquerading (process name)"
+    expected_primary_source: host
+    expected_secondary_source: null
+    network_evidence: "NONE"
+    host_evidence: "DECISIVE — auditd unlink/unlinkat (self-delete), kill/tgkill of security/competitor processes, prctl(PR_SET_NAME) masquerade, writes disabling logging"
+    telemetry_evidence: "negligible; may show a process-count drop (nprocs) when competitors killed"
+    cic_ynu_coverage: "PARTIAL — self-delete/kill visible in CIC-YNU syscalls but unlabelled."
+    hypothesis: "H-HOST + OVERLAY: evasion is host-only and typically co-occurs with S5/S6; it is an overlay tag, not an exclusive stage. Prediction: I(S12;net) ~ 0. Also a robustness probe: does evasion DEGRADE host observability (missing-data test)?"
+    info_prediction: "I(S12;host) HIGH; I(S12;net) ~ 0. Doubles as a host-observability stress test."
+    fusion_role: host_sufficient_overlay
+
+# ---------------------------------------------------------------------
+# FALSIFIABLE HYPOTHESES  (the dataset's reason to exist; metrics of record).
+# Estimation: per-stage recall + macro-F1 + FPR + TPR@low-FPR per source; and
+# usable/conditional information I(stage; source) and I(stage; src_a | src_b) in
+# the V-information style of the pilots (paired stratified bootstrap CIs).
+# ---------------------------------------------------------------------
+hypotheses:
+  H_STAGE_MASTER:
+    claim: "The most-informative source is STAGE-DEPENDENT; no single source is dominant across all stages."
+    predicts: "argmax_source per-stage recall changes across stages: network for {S1,S8-overt,S9-DDoS,S10}, host for {S4-write,S5,S6,S7,S12}, fusion for {S2,S3,S8-stealth,S11}."
+    falsified_if: "one source achieves top per-stage recall on EVERY stage."
+    grounding: "Tan et al. 2026 (which sources > how many); Alrawi 2021 lifecycle."
+  H_NET_STAGES:
+    claim: "Network is sufficient (host/telemetry add ~0 usable info) for remote-interaction stages S1, S8-overt, S9-DDoS, S10."
+    predicts: "I(stage;host|net) CIs include 0 for these stages."
+    falsified_if: "host or telemetry adds usable information (CI excludes 0) on any of them."
+  H_HOST_STAGES:
+    claim: "Host is sufficient (network adds ~0) for on-host stages S5, S6, S7, S12 (and S4 file-write)."
+    predicts: "I(stage;net|host) CIs include 0 — REPLICATING P6 on real hardware, extended from S5 to S6/S7."
+    falsified_if: "network adds usable info on any host-only stage on real hardware."
+  H_FUSION_AMBIGUITY:
+    claim: "Stages S2, S3, S8-stealth, S11 are individually AMBIGUOUS; fusion strictly improves detection."
+    predicts: "fusion TPR@1%FPR > best single source; positive synergy (conditional info > 0); ~1.6x reconstruction in the Tan-et-al. sense."
+    falsified_if: "best single source matches fusion on these stages (fusion gain CI includes 0)."
+  H_TELEM_UNIQUE:
+    claim: "Telemetry carries UNIQUE information only for resource-intensive stages (S9), and only under controlled device config."
+    predicts: "I(S9-mining;telem|net,host) > 0 after config control; telemetry adds ~0 elsewhere."
+    falsified_if: "telemetry adds info at S1/S2/S6-type stages beyond a device-fingerprint baseline (would indicate the P5 fingerprint leak, not signal)."
+
+# ---------------------------------------------------------------------
+# DEVICE-CONFIG METADATA  (P5 guard): recorded per board, per campaign, so
+# telemetry reflects BEHAVIOUR not a device/emulation fingerprint. A per-device
+# benign baseline (S0) is captured in the SAME campaign as every attack stage.
+# ---------------------------------------------------------------------
+device_config_metadata:
+  record_per_board: [hostname, arch, kernel_version, btf_present, distro, ram_mb,
+                     cpu_model, core_count, cpufreq_governor, stock_process_set_hash,
+                     cgroup_version, thermal_zones, gpu_present, sd_image_hash]
+  boards:
+    rpi3b_plus:
+      arch: armv7l (ARM 32-bit)
+      distro: "Raspberry Pi OS (Bookworm 32-bit)"
+      kernel_hint: "6.x; verify BPF/BTF (bcc CO-RE may be unavailable on 32-bit)"
+      cgroup: v1_or_v2
+      note: "Real-hardware analogue of CIC-YNU ARM 32-bit subset; weakest CPU => clearest S9 thermal/power."
+    rpi5:
+      arch: aarch64 (ARM64)
+      distro: "Raspberry Pi OS (Bookworm 64-bit)"
+      kernel_hint: "6.x with BTF => full eBPF/bcc CO-RE (execsnoop/opensnoop/tcpconnect)"
+      cgroup: v2
+      note: "Best host-syscall capture; busy-gateway benign profile."
+    jetson_nano:
+      arch: aarch64 (ARM64)
+      distro: "JetPack / L4T (Ubuntu 18.04)"
+      kernel_hint: "4.9 L4T — NO BTF; use auditd + strace (+bcc with kernel headers), NOT CO-RE eBPF"
+      cgroup: v1
+      note: "GPU => unique S9 GPU-mining telemetry (tegrastats/nvpmodel); stock NVIDIA modules baselined for S7."
+
+# ---------------------------------------------------------------------
+# COLLECTOR CONSTRAINTS derived from the per-board kernels (buildability).
+# ---------------------------------------------------------------------
+collector_constraints:
+  ebpf_core: "Only RPi 5 reliably supports CO-RE eBPF. RPi 3B+ (32-bit) and Jetson Nano (L4G 4.9, no BTF) fall back to auditd + strace + osquery. Keep the HOST feature schema identical across boards by extracting from auditd (common denominator); use eBPF only as an additional stream on RPi 5."
+  auditd_rules: "Ship one auditd rule set covering execve, connect, open/openat/creat, chmod/fchmodat, setuid/setresuid, ptrace, init_module/finit_module, unlink/unlinkat, and key files (rc.local, systemd units, crontab, authorized_keys). Same ruleset on all three boards; syscall NUMBERS differ (armv7 vs aarch64) so key by NAME (reuse P4 harmonisation)."
+  zeek: "Per-device Zeek on the board's own interface (no SPAN/mirror). Same scripts on all boards; archive raw pcap via tcpdump for reproducibility."
+  telemetry: "telemetry_reader.py already portable (psutil -> /proc/sys fallback). Add tegrastats parsing on Jetson for GPU/power; INA219 drop-in via read_power() when wired."
+
+# ---------------------------------------------------------------------
+# SAFETY / CONTAINMENT (mandatory; charter §11). This file is a LABELLING
+# schema; attack behaviour comes from CONTAINED tool categories already in
+# scenarios.yaml. All impact/propagation/C2/exfil stages target only the
+# air-gapped segment, an emulated C2 / DNS sinkhole, and revertible SD images;
+# ethics sign-off required before any live-malware (S4-S12 malware) capture.
+# ---------------------------------------------------------------------

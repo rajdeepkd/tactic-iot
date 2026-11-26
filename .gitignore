@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# LaTeX build artefacts from generated figure/table sources
+*.aux
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+figure build logs
+*.out
+
+# Data and run outputs (the dataset is deposited separately; see README)
+*.pcap
+*.pcapng
+*.zeek.log
+data/
+raw/
+results/
+*.csv
+*.parquet
+*.npz
+
+# Local secrets / credentials (never commit real ones)
+creds.yaml
+*.key
+*.pem
+id_rsa*

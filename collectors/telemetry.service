@@ -1,0 +1,38 @@
+[Unit]
+# Objective-3 testbed: always-on device-telemetry collector.
+# Anti-sessionization (Charter principle #1): this service is enabled ONCE and
+# runs continuously across benign-baseline, benign-load and attack windows. It is
+# NEVER started/stopped per scenario -- stage labels come from labels.csv by
+# interval-join, not from when the collector was up.
+Description=Objective-3 device telemetry collector
+After=network-online.target chrony.service time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=simple
+# Per-node arguments live here so every board runs the SAME binary with only its
+# power backend differing (written by provision_node.sh):
+#   TELEM_ARGS="--out /var/log/testbed/telemetry --hz 1 --session <id>
+#               --power ina260 --shunt 0.002 --power-hz 10"   (RPi 5)
+#   TELEM_ARGS="... --power ina219 --shunt 0.1 --power-hz 10" (RPi 3B+)
+#   TELEM_ARGS="... --power jetson --power-hz 5"              (Jetson Nano)
+#   TELEM_ARGS="... --power shelly --plug-host 10.0.0.31"     (plug fallback)
+EnvironmentFile=/etc/testbed/telemetry.env
+ExecStartPre=/usr/bin/python3 /opt/testbed/collectors/telemetry_reader.py --emit-config $TELEM_ARGS
+ExecStart=/usr/bin/python3 /opt/testbed/collectors/telemetry_reader.py $TELEM_ARGS
+Restart=always
+RestartSec=2
+# Bounded footprint so the collector itself does not become the load signal on
+# the 1 GB RPi 3B+ (keep the observer effect small and IDENTICAL across boards).
+Nice=-5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=2
+# I2C (INA219/INA260) needs /dev/i2c-*; keep the rest locked down.
+DeviceAllow=/dev/i2c-1 rw
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/testbed
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

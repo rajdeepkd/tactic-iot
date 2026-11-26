@@ -1,0 +1,16 @@
+[Unit]
+Description=Objective-3 benign background workload (host+net, keeps both modalities populated)
+Documentation=file:/opt/testbed/run_benign.sh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/testbed/run_benign.sh
+Restart=always
+RestartSec=2
+Nice=10
+# Environment=TB_HUB=192.168.0.50 TB_GW=192.168.0.1
+
+[Install]
+WantedBy=multi-user.target

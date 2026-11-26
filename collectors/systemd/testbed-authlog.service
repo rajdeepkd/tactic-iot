@@ -1,0 +1,21 @@
+[Unit]
+Description=Testbed auth-context collector (sshd/sudo/su/PAM via journald)
+After=network-online.target chrony.service systemd-journald.service
+Wants=chrony.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/testbed/testbed.env
+ExecStart=/usr/bin/python3 /opt/testbed/collectors/hostlog/authlog_shipper.py \
+    --out /var/log/testbed/hostlog \
+    --cursor /var/log/testbed/hostlog/.authcursor \
+    --source journald
+Restart=always
+RestartSec=3
+# needs to read the journal; add to systemd-journal group instead of running root
+User=testbed
+SupplementaryGroups=systemd-journal adm
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

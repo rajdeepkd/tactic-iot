@@ -1,0 +1,58 @@
+## Objective-3 testbed auditd rule set (TEMPLATE -- do not install directly).
+## install_audit_rules.sh strips the wrong-ABI blocks per board and writes the
+## result to /etc/audit/rules.d/10-testbed.rules, then runs `augenrules --load`.
+##
+## Placeholders replaced by the installer:
+##   __ARCHLINES__   ->  the execve/priv rules for THIS board's ABI(s)
+##
+## Design constraints (from the charter + pilots):
+##  - ALWAYS ON, identical benign+attack (Phase-0 anti-sessionisation, P7 confounds).
+##  - Covers exactly the HOST-DOMINANT stages: delivery/execution (execve),
+##    persistence + privilege escalation (setuid/setgid/capset, cred/identity
+##    file writes), and authentication (PAM USER_* + auth-file watches).
+##  - No user/PID exclusions that would differ between benign and attack traffic.
+
+## ---- baseline / self-protection -------------------------------------------
+-D
+## big buffers: IoT boards are slow, brute force + scans burst events
+-b 16384
+## on backlog overflow, log to printk (1) -- never panic (2) on a research box
+-f 1
+--backlog_wait_time 0
+## rate limit 0 = unlimited (we WANT every execve during a capture)
+-r 0
+
+## ---- ABI-specific syscall rules (filled by installer) ---------------------
+__ARCHLINES__
+
+## ---- authentication context (ABI-independent; PAM emits USER_* records) ----
+## sshd/sudo/su/login PAM stack -> USER_AUTH, USER_ACCT, CRED_ACQ, USER_LOGIN,
+## USER_START/END.  These are the structured twin of /var/log/auth.log and are
+## the flagship signal for scenario 1 (slow brute force vs. genuine typo).
+## PAM generates them automatically once auditd runs; we only watch the files
+## that authentication and identity depend on so tampering is also captured.
+-w /etc/passwd            -p wa -k identity
+-w /etc/group             -p wa -k identity
+-w /etc/shadow            -p wa -k identity
+-w /etc/gshadow           -p wa -k identity
+-w /etc/sudoers           -p wa -k identity
+-w /etc/sudoers.d/        -p wa -k identity
+-w /etc/ssh/sshd_config   -p wa -k sshd_conf
+-w /etc/pam.d/            -p wa -k pam_conf
+-w /var/log/auth.log      -p wa -k authlog_tamper
+-w /var/log/faillog       -p wa -k logins
+-w /var/log/lastlog       -p wa -k logins
+-w /var/log/wtmp          -p wa -k logins
+-w /var/log/btmp          -p wa -k logins
+
+## ---- persistence surfaces (host-dominant stage) ---------------------------
+-w /etc/crontab           -p wa -k persistence
+-w /etc/cron.d/           -p wa -k persistence
+-w /etc/systemd/system/   -p wa -k persistence
+-w /etc/rc.local          -p wa -k persistence
+-w /root/.ssh/            -p wa -k persistence
+-w /home/                 -p wa -k persistence_home
+
+## keep rules mutable so the orchestrator can reload between campaigns.
+## (-e 2 would lock until reboot; we deliberately do NOT set it.)
+-e 1

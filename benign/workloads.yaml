@@ -1,0 +1,201 @@
+# =============================================================================
+# Phase-1 HARD BENIGN WORKLOAD manifest  (declarative, reproducible)
+# =============================================================================
+# These are ORDINARY administrative / application workloads, NOT attacks.
+# Their job is to behaviourally OVERLAP the malicious activity so the classifier
+# cannot separate benign from malicious on triviality (fixes the P7 ceiling:
+# static/dynamic linkage shortcut, capture-date gap, window/session leakage, and
+# "benign never scans"). Every workload runs CONCURRENTLY and in the SAME
+# campaign as the attacks (Phase-0 anti-sessionisation principle #1) and is
+# started ONCE at campaign start by benignd.py / admin_session.py -- never
+# per-attack.
+#
+# Each workload documents `overlaps_stage` (the kill-chain stage / attack whose
+# per-modality signature it deliberately mimics) and `neutralises` (the exact
+# CIC-YNU P7 shortcut feature it de-correlates from the label).
+#
+# Fields:
+#   id            unique workload id -> written to benign_activity.csv
+#   kind          proc_churn | service_traffic | discovery | admin_session |
+#                 file_transfer | update
+#   runner        which artifact executes it (benignd | admin_session)
+#   hosts         device_ids that run this workload (must exist in nodes.yaml)
+#   cmd / params  what to execute (relative to benign/ unless absolute)
+#   rate_s        mean inter-arrival (Poisson) in seconds; 0 = long-lived daemon
+#   jitter        multiplicative jitter on rate_s and on per-action sleeps
+#   duration_s    [min,max] bound for one invocation (sampled uniform)
+#   linkage       for binary workloads: which linkage variants to rotate through
+#   annotate      write a benign_activity.csv row for each invocation (default true)
+#   overlaps_stage / neutralises   documentation + validity-gate metadata
+# =============================================================================
+
+defaults:
+  campaign_seed: 20260927          # seeds every node's RNG (reproducible timing)
+  jitter: 0.35                     # +/-35% on all sampled intervals
+  active_hours: "24/7"             # benign must span attack AND quiet windows
+  annotate: true
+  # ship annotations here; benignd rsyncs to the hub store every flush interval
+  annot_path: "/var/log/testbed/benign/benign_activity.csv"
+  flush_s: 5
+
+workloads:
+
+# -----------------------------------------------------------------------------
+# 1. PROCESS-CHURN  (fixes P7 shortcut: benign that fork/exec/exit + poll)
+#    Runs the SAME small utilities in BOTH static (musl/busybox) and dynamic
+#    (glibc/coreutils) linkage so the loader signature is not a class label.
+# -----------------------------------------------------------------------------
+- id: cron_maintenance
+  kind: proc_churn
+  runner: benignd
+  hosts: [rpi3b-1, rpi5-silo, jetson-1]
+  cmd: "bash cron/run_maintenance.sh"      # logrotate, log-parse pipeline, health report
+  rate_s: 300
+  duration_s: [8, 40]
+  linkage: [dynamic, static]               # rotates worker-glibc / worker-musl + coreutils/busybox
+  overlaps_stage: execution_persistence
+  neutralises: ["sys__exit_group", "sys__wait4", "sys__clone", "sys__fcntl", "sys___newselect"]
+
+- id: local_update_check
+  kind: update
+  runner: benignd
+  hosts: [rpi3b-1, rpi5-silo, jetson-1]
+  # apt against the AIR-GAPPED local mirror on the hub (no internet egress).
+  cmd: "bash cron/apt_update_local.sh {mirror_ip}"
+  rate_s: 3600
+  duration_s: [10, 90]
+  linkage: [dynamic]                        # apt/dpkg are glibc-dynamic by nature
+  overlaps_stage: delivery
+  neutralises: ["net__download_bytes", "sys__openat", "sys__mmap2", "sys__statx"]
+
+- id: static_dynamic_worker
+  kind: proc_churn
+  runner: benignd
+  hosts: [rpi3b-1, rpi5-silo, jetson-1]
+  # the twin worker binary: file I/O + a health socket connect + fork/exec + exit.
+  # Rotated across both linkages -> first-k syscall loader signature is 50/50.
+  cmd: "bin/run_worker.sh {linkage} {health_host} {health_port}"
+  rate_s: 120
+  duration_s: [3, 15]
+  linkage: [static, dynamic]
+  overlaps_stage: execution
+  neutralises: ["sys__fcntl64", "sys__mmap2", "sys__statx", "sys__set_thread_area", "sys__set_tid_address"]
+
+# -----------------------------------------------------------------------------
+# 2. IoT SERVICE TRAFFIC  (fixes exfil/C2 "any periodic beacon == malicious")
+#    Long-lived legitimate device chatter that the low-and-slow beacon hides in.
+# -----------------------------------------------------------------------------
+- id: mqtt_telemetry_pub
+  kind: service_traffic
+  runner: benignd
+  hosts: [rpi3b-1, rpi5-silo, jetson-1]
+  cmd: "python3 service_traffic.py --proto mqtt --broker {mqtt_broker} --interval 15"
+  rate_s: 0                                 # long-lived
+  overlaps_stage: c2_exfil
+  neutralises: ["net__conn_periodicity", "net__small_pkt_ratio", "net__inter_arrival_time"]
+
+- id: http_rest_poll
+  kind: service_traffic
+  runner: benignd
+  hosts: [rpi3b-1, jetson-1]
+  cmd: "python3 service_traffic.py --proto http --url http://{svc_host}:8080/health --interval 20"
+  rate_s: 0
+  overlaps_stage: c2_exfil
+  neutralises: ["net__http_share", "net__conn_periodicity"]
+
+- id: rtsp_pull
+  kind: service_traffic
+  runner: benignd
+  hosts: [jetson-1]                         # Jetson pulls the camera stream (real device)
+  cmd: "python3 service_traffic.py --proto rtsp --url rtsp://{ipcam_ip}:554/stream1 --interval 30"
+  rate_s: 0
+  overlaps_stage: camera_abuse
+  neutralises: ["net__long_flow_bytes", "tel__cpu_pct"]
+
+- id: modbus_poll
+  kind: service_traffic
+  runner: benignd
+  hosts: [rpi5-silo]                        # second silo runs an industrial-style poll
+  cmd: "python3 service_traffic.py --proto modbus --host {svc_host} --interval 10"
+  rate_s: 0
+  overlaps_stage: c2_exfil
+  neutralises: ["net__conn_periodicity", "net__tcp_share"]
+
+# -----------------------------------------------------------------------------
+# 3. LEGITIMATE DISCOVERY  (fixes P7 "benign never scans")
+#    A fleet HEALTH MONITOR: mDNS/DNS-SD browse + TCP connect() liveness checks
+#    against the CONFIGURED, KNOWN service inventory only. This is standard
+#    operational monitoring (Nagios check_tcp / blackbox-exporter style), not a
+#    reconnaissance scan -- it never sweeps unknown hosts/ports. It nonetheless
+#    produces the connect() / SYN fan-out that recon lights up in the network.
+# -----------------------------------------------------------------------------
+- id: fleet_health_monitor
+  kind: discovery
+  runner: benignd
+  hosts: [rpi5-silo]                        # one node plays the monitoring station
+  cmd: "python3 discovery.py --inventory discovery_inventory.yaml --interval 45"
+  rate_s: 0
+  overlaps_stage: recon_scan
+  neutralises: ["net__syn_count", "net__tcp_share", "net__n_windows", "net__inter_arrival_time"]
+
+- id: mdns_browse
+  kind: discovery
+  runner: benignd
+  hosts: [rpi3b-1, jetson-1]
+  cmd: "python3 discovery.py --mdns --interval 60"
+  rate_s: 0
+  overlaps_stage: recon_scan
+  neutralises: ["net__dns_share", "net__mcast_ratio"]
+
+# -----------------------------------------------------------------------------
+# 4. BACKUP / FILE TRANSFER  (fixes delivery/exfil vs legit large-transfer)
+# -----------------------------------------------------------------------------
+- id: nightly_backup
+  kind: file_transfer
+  runner: benignd
+  hosts: [rpi3b-1, rpi5-silo, jetson-1]
+  # rsync-over-ssh of a data dir to the hub; both compressed & plain (telemetry var)
+  cmd: "python3 backup_xfer.py --mode rsync --dst {backup_host} --src /var/lib/testbed/data"
+  rate_s: 5400
+  duration_s: [20, 180]
+  overlaps_stage: exfiltration
+  neutralises: ["net__long_flow_bytes", "net__up_down_ratio", "tel__disk_r_bps"]
+
+- id: log_ship
+  kind: file_transfer
+  runner: benignd
+  hosts: [rpi3b-1, rpi5-silo, jetson-1]
+  cmd: "python3 backup_xfer.py --mode scp --dst {backup_host} --src /var/log/testbed"
+  rate_s: 900
+  duration_s: [5, 30]
+  overlaps_stage: exfiltration
+  neutralises: ["net__up_down_ratio", "net__small_pkt_ratio"]
+
+# -----------------------------------------------------------------------------
+# 5. ADMIN SESSIONS  (fixes the flagship: single failed login ~ typo)
+#    Runs from the Windows control machine (paramiko) and from a board-to-board
+#    hop, so benign auth is not tied to one source. Occasionally mistypes the
+#    password/username (fat-finger) -> benign failed-auth events in auth.log,
+#    interleaved with the slow brute force. NOT a brute-force tool: the operator
+#    HAS the credentials, retries are capped and at human cadence.
+# -----------------------------------------------------------------------------
+- id: admin_ssh_ops
+  kind: admin_session
+  runner: admin_session
+  hosts: [rpi3b-1, rpi5-silo, jetson-1]     # targets of the admin sessions
+  cmd: "python3 admin_session.py --targets rpi3b-1,rpi5-silo,jetson-1 --proto ssh"
+  rate_s: 420                               # a session every ~7 min on average
+  duration_s: [15, 240]
+  # fat-finger model (see admin_session.py --help): P(typo)=0.18, max 3 retries
+  overlaps_stage: brute_force
+  neutralises: ["host_auth__failed_password_count", "net__ssh_conn_count", "tel__sshd_cpu"]
+
+- id: admin_telnet_ops
+  kind: admin_session
+  runner: admin_session
+  hosts: [rpi3b-1]                          # busybox telnetd target (legacy IoT)
+  cmd: "python3 admin_session.py --targets rpi3b-1 --proto telnet"
+  rate_s: 1800
+  duration_s: [10, 90]
+  overlaps_stage: brute_force
+  neutralises: ["net__telnet_share", "host_auth__failed_login_count"]

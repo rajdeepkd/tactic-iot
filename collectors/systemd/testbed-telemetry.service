@@ -1,0 +1,16 @@
+[Unit]
+Description=Testbed device telemetry sampler (CPU/mem/load/thermal/net/disk)
+After=network-online.target chrony.service
+Wants=chrony.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/testbed/testbed.env
+ExecStart=/usr/bin/python3 /opt/testbed/collectors/telemetry_reader.py \
+    --out /var/log/testbed/telemetry --hz 1
+Restart=always
+RestartSec=3
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

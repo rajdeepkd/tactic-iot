@@ -1,0 +1,16 @@
+[Unit]
+Description=Objective-3 network capture (rotating nanosecond pcap)
+Documentation=file:/opt/testbed/run_capture.sh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/testbed/run_capture.sh
+Restart=always
+RestartSec=2
+Environment=TB_KEEP_MIN=4320   # keep pcaps 3 days -> a board reboot after a power cut won't prune un-harvested runs
+# Environment=TB_IFACE=eth0 TB_ROT=600   # override per board if needed
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obj3.testbed/window_record.schema.json",
+  "title": "Finalised per-window multimodal record",
+  "description": "One row of the finalised testbed dataset. pipeline/align_windows.py windows each device's net/host/tel streams on the board's synced CLOCK_REALTIME grid (window_idx = floor(ts_realtime_ns / W_ns)), outer-joins per (device_id, window_idx), interval-joins the orchestrator's labels.csv, and emits modality_mask + group_id. finalize_dataset.py then ADDS boundary_ambiguous/core_overlap_frac (guard bands), telb__ (per-device benign baseline), cfg_* nuisance metadata, and the split indices. Column-prefix convention (net__/host__/tel__ + __cnt) matches Phase-0 E2b so E1'/E2'/E4' repoints cleanly.",
+  "type": "object",
+  "required": [
+    "device_id", "window_idx", "window_start_iso", "group_id",
+    "stage", "attack_type", "modality_mask", "boundary_ambiguous"
+  ],
+  "properties": {
+    "device_id":        { "type": "string" },
+    "window_idx":       { "type": "integer", "description": "floor(ts_realtime_ns / W_ns) — same idx == same wall-clock interval on every device (align_windows.py global-epoch anchor)" },
+    "window_start_iso": { "type": "string", "description": "UTC ISO of the window start on the synced clock" },
+
+    "stage":            { "type": "string", "description": "interval-joined stage id (stages.yaml S-id); 'normal' when no attack stage covers the window" },
+    "attack_type":      { "type": "string", "description": "coarse attack_type from labels.csv; 'normal' for benign" },
+    "label_overlap":    { "type": "number", "description": "align_windows.py raw-overlap fraction of the window with its stage interval" },
+    "core_overlap_frac":{ "type": "number", "description": "finalize_dataset.py: overlap fraction with the guard-trimmed CORE interval" },
+    "boundary_ambiguous": { "type": "boolean", "description": "finalize_dataset.py: window is in a guard band / below min_overlap_frac of CORE; excludable from strict train/eval (P7 boundary-leakage control)" },
+
+    "group_id":         { "type": "string", "description": "grouped-by-EXECUTION split key (align_windows.py): attack windows '<scenario_id>#<run_idx>'; benign windows 'benign#<device_id>#<time_block>'. GroupKFold on this prevents same-execution windows spanning train/test (P7: up to 0.35 macro-F1)." },
+
+    "modality_mask":    { "type": "string", "pattern": "^[01]{3}$", "description": "net|host|tel presence, e.g. '111' or '101'; a 0 marks a GENUINELY-absent modality (ipcam has no host logs), so E4' missing-modality is meaningful" },
+
+    "net__*":           { "type": "number", "description": "network features (Zeek conn/ssh/http/dns/ssl/weird + tcpdump), prefix net__; __cnt = flow count. Identity fields (IPs) dropped (anti-leakage)." },
+    "host__*":          { "type": "number", "description": "host features (auditd execve/connect, auth.log fail/ok counts, journald), prefix host__; __cnt = record count. Names harmonised across armv7/aarch64 (P4)." },
+    "tel__*":           { "type": "number", "description": "device-telemetry features (telemetry_reader.py: cpu/mem/load/thermal/net/disk; INA219 power later), prefix tel__." },
+    "telb__*":          { "type": "number", "description": "finalize_dataset.py baseline-relative telemetry (tel__ minus per-device benign median, same campaign) — neutralises the P5 device/arch fingerprint" },
+
+    "board":            { "type": ["string","null"], "enum": ["rpi3bplus","rpi5","jetson_nano","laptop_vm", null] },
+    "arch":             { "type": ["string","null"], "enum": ["armv7l","aarch64","x86_64", null] },
+    "cfg_kernel":       { "type": ["string","null"], "description": "controlled nuisance metadata from run_manifest (NOT a feature): kernel release" },
+    "cfg_ram_mb":       { "type": ["integer","null"] },
+    "cfg_governor":     { "type": ["string","null"] },
+    "cfg_nvpmodel":     { "type": ["string","integer","null"] }
+  }
+}

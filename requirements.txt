@@ -1,0 +1,40 @@
+# TACTIC-IoT -- Python dependencies
+#
+# Python 3.10+ recommended (developed and run on CPython 3.13).
+# Install with:  python -m pip install -r requirements.txt
+#
+# The code is split across two logical environments. You can install the full
+# set, or only the group you need (analysis-only users rarely need the
+# collection/service libraries, and vice versa).
+
+# ---------------------------------------------------------------------------
+# Analysis and preprocessing  (pipeline/ and analysis/)
+# ---------------------------------------------------------------------------
+numpy>=1.24
+pandas>=2.0
+scikit-learn>=1.3
+torch>=2.1            # LSTM / GRU temporal-context models in exp_v5_analysis.py
+PyYAML>=6.0          # config, catalogues, and schemas throughout
+
+# ---------------------------------------------------------------------------
+# Testbed services and benign-traffic generators  (services/ and benign/)
+# Needed only if you re-run the live collection on your own testbed.
+# ---------------------------------------------------------------------------
+paho-mqtt>=1.6       # MQTT broker clients (benign + service handlers)
+paramiko>=3.0        # scripted SSH admin sessions (benign host activity)
+pymodbus>=3.5        # Modbus/TCP simulated PLC and clients
+aiocoap>=0.4         # CoAP server/clients
+psutil>=5.9          # host telemetry reader (CPU/memory/process stats)
+dpkt>=1.9            # lightweight packet parsing helpers
+
+# ---------------------------------------------------------------------------
+# System packages (NOT installable via pip -- install with your OS package
+# manager on the collecting boards):
+#   * bcc / python3-bpfcc   -- eBPF syscall collector (collectors/syscall/)
+#   * zeek                  -- network connection logs (pipeline/zeek_tactic.zeek)
+#   * tcpdump               -- packet capture
+#   * chrony                -- time synchronisation (timesync/)
+#   * auditd                -- host audit events (collectors/audit/)
+#   * linux-perf            -- syscall fallback collector on kernels without BCC
+# A LaTeX toolchain with PGF/TikZ is required to compile the generated figure
+# sources (analysis/make_v5_figures.py writes pgfplots .tex files).

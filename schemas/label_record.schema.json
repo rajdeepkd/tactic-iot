@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obj3.testbed/label_record.schema.json",
+  "title": "Phase-1 ground-truth stage-label record",
+  "description": "One JSON object per stage execution, appended (NDJSON) to labels.ndjson by the deterministic orchestrator. Times are on the target board's chrony-disciplined CLOCK_REALTIME (the same clock its collectors stamp), captured by an on-device marker; monotonic times are per-board and used only for within-board sanity. The orchestrator ALSO writes a flat projection labels.csv (scenario_id,run_idx,attack_type,target,stage,start_iso,end_iso,start_ns,end_ns,guard_pre_s,guard_post_s) which pipeline/align_windows.py and pipeline/validate_alignment.py consume for interval-join labelling. `stage` values are ids from the canonical taxonomy stages.yaml (S0..S12).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "campaign_id_prefix", "scenario_id", "stage_index",
+    "stage", "mitre_tactic", "target_device_id", "attacker_device_id", "action_ref",
+    "t_open_synced", "t_close_synced", "guard_pre_s", "guard_post_s",
+    "primary_modality", "expected_modalities", "validity_gate_passed"
+  ],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "run_id":            { "type": "string", "description": "campaign run id: <id_prefix>-<UTCstamp>-<uuid8>" },
+    "campaign_id_prefix":{ "type": "string" },
+    "scenario_id":       { "type": "string", "description": "manifest scenario id (the lifecycle campaign)" },
+    "repeat_idx":        { "type": "integer", "minimum": 1, "description": "which repeat of this scenario" },
+    "stage_index":       { "type": "integer", "minimum": 0, "description": "0-based position of this stage within the scenario" },
+    "stage":             { "type": "string", "description": "canonical stage id from stages.yaml", "enum": ["S0_baseline_benign","S1_reconnaissance_scanning","S2_bruteforce_credential_access","S3_exploitation_initial_access","S4_delivery_download","S5_execution","S6_persistence","S7_privilege_escalation","S8_command_and_control","S9_impact","S10_propagation","S11_exfiltration","S12_defense_evasion"] },
+    "mitre_tactic":      { "type": ["string","null"] },
+    "mitre_technique":   { "type": ["string","null"] },
+    "target_device_id":  { "type": "string", "description": "device whose collectors this stage labels" },
+    "attacker_device_id":{ "type": "string" },
+    "action_ref":        { "type": "string", "description": "key into scenarios.yaml actions: (methodology-level tool reference)" },
+    "action_cmd_sha256": { "type": "string", "description": "sha256 of the fully-resolved command string (provenance; the string itself is NOT stored in the dataset)" },
+    "sample_id":         { "type": ["string","null"], "description": "chain-of-custody id of the curated sample (contained stages only)" },
+    "sample_sha256":     { "type": ["string","null"] },
+
+    "t_open_synced":     { "type": "number", "description": "epoch seconds (float, ns res) on target board's synced CLOCK_REALTIME at window OPEN, from the on-device marker" },
+    "t_close_synced":    { "type": "number", "description": "epoch seconds on target board synced clock at window CLOSE" },
+    "t_open_mono":       { "type": ["number","null"], "description": "target board CLOCK_MONOTONIC at open (within-board only)" },
+    "t_close_mono":      { "type": ["number","null"] },
+    "orch_t_open":       { "type": "number", "description": "orchestrator (Windows) wall clock at open; validation only" },
+    "orch_t_close":      { "type": "number" },
+    "clock_skew_ms":     { "type": ["number","null"], "description": "target-vs-time_master chrony offset at stage start (ms), from run manifest preflight" },
+
+    "guard_pre_s":       { "type": "number", "minimum": 0, "description": "seconds trimmed off the FRONT of [t_open,t_close] to form the CORE interval" },
+    "guard_post_s":      { "type": "number", "minimum": 0, "description": "seconds trimmed off the END to form the CORE interval" },
+
+    "primary_modality":  { "type": ["string","null"], "enum": ["network","host","telemetry","both","all",null], "description": "expected_primary_source from stages.yaml — the a-priori HYPOTHESIS for the dominant source; analysis metadata, NEVER a feature or the label source" },
+    "expected_modalities": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "concurrency validity gate: sources expected to react" },
+    "validity_gate_passed": { "type": "boolean", "description": "true iff >=2 expected modalities showed a reaction above baseline in the core interval (Charter principle #2)" },
+    "validity_gate_detail": { "type": ["object","null"], "description": "per-modality reaction check result" },
+
+    "remote_pid":        { "type": ["integer","null"] },
+    "remote_exit_code":  { "type": ["integer","null"], "description": "attacker action exit code; null if terminated on window close" },
+    "terminated_on_close": { "type": "boolean" },
+    "notes":             { "type": ["string","null"] }
+  }
+}
